@@ -1,6 +1,6 @@
 {
   "name": "yishe-videos",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "FFmpeg Web UI - 全面的视频处理工具",
   "main": "server.js",
   "scripts": {

@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  yishe-videos:
+    # 使用 Docker Hub 镜像（发布后使用此配置）
+    image: 1sdesign/yishe-videos:latest
+    container_name: yishe-videos
+    ports:
+      # 格式：宿主机端口:容器端口
+      # 将容器的 1571 端口映射到宿主机的 1571 端口
+      - "1571:1571"
+    volumes:
+      # 数据持久化：将容器内的目录挂载到宿主机
+      # 这样即使容器删除，数据也不会丢失
+      - ./uploads:/app/uploads
+      - ./output:/app/output
+      - ./template:/app/template
+    environment:
+      # 环境变量
+      - NODE_ENV=production
+      - PORT=1571
+    restart: unless-stopped
+    # 资源限制（可选）
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+

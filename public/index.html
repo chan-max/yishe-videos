@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FFmpeg 视频处理服务控制台</title>
+  <link rel="stylesheet" href="/lib/semantic.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/semantic-ui/2.5.0/semantic.min.css">
+  <script src="/lib/jquery.js"></script>
+  <script src="/lib/vue.js"></script>
+  <script src="/lib/axios.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #f5f5f5;
+      font-size: 13px;
+    }
+    .app-layout {
+      display: flex;
+      min-height: 100vh;
+    }
+    .sidebar {
+      width: 220px;
+      background: #1b1c1d;
+      color: #fff;
+      position: fixed;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      overflow-y: auto;
+      z-index: 1000;
+    }
+    .sidebar-header {
+      padding: 1rem 0.75rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .sidebar-header h2 {
+      color: #fff;
+      margin: 0;
+      font-size: 1rem;
+    }
+    .sidebar-menu {
+      padding: 0.5rem 0;
+    }
+    .menu-item {
+      padding: 0.75rem 1rem;
+      cursor: pointer;
+      transition: background-color 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      color: rgba(255, 255, 255, 0.8);
+      border-left: 3px solid transparent;
+    }
+    .menu-item:hover {
+      background-color: rgba(255, 255, 255, 0.1);
+      color: #fff;
+    }
+    .menu-item.active {
+      background-color: rgba(33, 133, 208, 0.2);
+      color: #fff;
+      border-left-color: #2185d0;
+    }
+    .menu-item i {
+      width: 20px;
+      text-align: center;
+    }
+    .main-content {
+      flex: 1;
+      margin-left: 220px;
+      margin-right: 360px;
+      padding: 1rem 1.5rem;
+    }
+    .section {
+      margin-bottom: 2rem;
+    }
+    .debug-panel {
+      width: 360px;
+      background: #fff;
+      position: fixed;
+      right: 0;
+      top: 0;
+      bottom: 0;
+      overflow-y: auto;
+      z-index: 999;
+      border-left: 1px solid #e0e0e0;
+      box-shadow: -2px 0 4px rgba(0, 0, 0, 0.1);
+      display: flex;
+      flex-direction: column;
+    }
+    .debug-panel-header {
+      padding: 1rem;
+      border-bottom: 1px solid #e0e0e0;
+      background: #f9f9f9;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .debug-panel-content {
+      flex: 1;
+      padding: 1rem;
+      overflow-y: auto;
+    }
+    .debug-tabs {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+      border-bottom: 1px solid #e0e0e0;
+      padding-bottom: 0.5rem;
+    }
+    .debug-tab {
+      padding: 0.4rem 0.8rem;
+      cursor: pointer;
+      border-radius: 4px;
+      font-size: 0.85em;
+      transition: background-color 0.2s;
+      color: #666;
+    }
+    .debug-tab:hover {
+      background-color: #f0f0f0;
+    }
+    .debug-tab.active {
+      background-color: #2185d0;
+      color: #fff;
+    }
+    .debug-log {
+      background: #1e1e1e;
+      color: #d4d4d4;
+      padding: 0.75rem;
+      border-radius: 4px;
+      font-family: "Consolas", "Monaco", "Courier New", monospace;
+      font-size: 0.75rem;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      max-height: calc(100vh - 280px);
+      overflow-y: auto;
+    }
+    .debug-log-item {
+      margin-bottom: 0.5rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .debug-log-item:last-child {
+      border-bottom: none;
+    }
+    .debug-log-time {
+      color: #888;
+      font-size: 0.7em;
+      margin-bottom: 0.25rem;
+    }
+    .debug-log-content {
+      color: #d4d4d4;
+    }
+    .debug-log-content.error {
+      color: #f44336;
+    }
+    .debug-log-content.success {
+      color: #4caf50;
+    }
+    .status-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.9em;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #999;
+    }
+    .status-dot.ok {
+      background: #21ba45;
+    }
+    .status-dot.fail {
+      background: #db2828;
+    }
+    .view-container {
+      display: none;
+    }
+    .view-container.active {
+      display: block;
+    }
+    .video-preview {
+      max-width: 100%;
+      max-height: 400px;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      margin: 1rem 0;
+    }
+    .compact-segment {
+      padding: 0.75rem !important;
+      margin-bottom: 1rem !important;
+    }
+    .compact-segment h3 {
+      font-size: 1em !important;
+      margin-bottom: 0.75rem !important;
+    }
+    .code-output {
+      background: #1e1e1e;
+      color: #d4d4d4;
+      padding: 0.75rem;
+      border-radius: 4px;
+      font-family: "Consolas", "Monaco", "Courier New", monospace;
+      font-size: 0.75rem;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+    @media (max-width: 1200px) {
+      .debug-panel {
+        display: none;
+      }
+      .main-content {
+        margin-right: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="app-layout">
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <h2>
+            <i class="video icon"></i>
+            FFmpeg 服务
+          </h2>
+        </div>
+        <div class="sidebar-menu">
+          <div 
+            v-for="item in menuItems" 
+            :key="item.id"
+            class="menu-item"
+            :class="{ active: state.currentView === item.id }"
+            @click="switchView(item.id)"
+          >
+            <i :class="item.icon + ' icon'"></i>
+            <span>{{ item.name }}</span>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main-content">
+        <!-- 首页 -->
+        <div class="view-container" :class="{ active: state.currentView === 'home' }">
+          <div class="section">
+            <h1 class="ui header">
+              <i class="book icon"></i>
+              <div class="content">
+                使用指南
+                <div class="sub header">了解如何使用 FFmpeg 视频处理服务</div>
+              </div>
+            </h1>
+            <div class="ui two column grid">
+              <div class="column">
+                <div class="ui segment">
+                  <h3 class="ui header">操作步骤</h3>
+                  <ol class="ui list">
+                    <li>先进行健康检查，确认 FFmpeg 已安装。</li>
+                    <li>添加多个资源（图片、视频、音频），支持网络 URL。</li>
+                    <li>为每个资源设置参数（图片时长、视频/音频的开始时间和持续时间）。</li>
+                    <li>设置合成选项（分辨率、帧率等）。</li>
+                    <li>点击"开始合成视频"生成新视频。</li>
+                    <li>下载合成后的视频文件。</li>
+                  </ol>
+                </div>
+              </div>
+              <div class="column">
+                <div class="ui segment">
+                  <h3 class="ui header">注意事项</h3>
+                  <ul class="ui list">
+                    <li>确保 FFmpeg 已正确安装并在系统 PATH 中</li>
+                    <li>支持格式：图片（JPG, PNG, GIF等）、视频（MP4, AVI, MOV等）、音频（MP3, WAV, AAC等）</li>
+                    <li>图片会自动转换为视频片段，需要设置显示时长</li>
+                    <li>视频和音频可以设置开始时间和持续时间</li>
+                    <li>所有资源会按添加顺序合成为一个新视频</li>
+                    <li>合成后的文件保存在 output 目录</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 服务配置 -->
+        <div class="view-container" :class="{ active: state.currentView === 'config' }">
+          <div class="section">
+            <h1 class="ui header">
+              <i class="cog icon"></i>
+              <div class="content">
+                服务配置
+                <div class="sub header">配置服务和检测 FFmpeg 状态</div>
+              </div>
+            </h1>
+            <div class="ui segment">
+              <h3 class="ui dividing header">服务操作</h3>
+              <div class="ui small buttons">
+                <button class="ui small button" :class="{ loading: state.loading.health }" @click="checkHealth" :disabled="state.loading.health">
+                  健康检查
+                </button>
+                <button class="ui small primary button" :class="{ loading: state.loading.checkFfmpeg }" @click="checkFFmpeg" :disabled="state.loading.checkFfmpeg">
+                  检测 FFmpeg
+                </button>
+              </div>
+              <div style="margin-top: 1rem;">
+                <span class="status-indicator">
+                  <span class="status-dot" :class="{'ok': state.healthOk, 'fail': state.healthOk === false}"></span>
+                  <span>健康状态：{{ state.healthOk === null ? '未知' : (state.healthOk ? '正常' : '异常') }}</span>
+                </span>
+                <div v-if="state.ffmpegStatus" style="margin-top: 0.5rem;">
+                  <span class="status-indicator">
+                    <span class="status-dot" :class="{'ok': state.ffmpegStatus.installed, 'fail': !state.ffmpegStatus.installed}"></span>
+                    <span>{{ state.ffmpegStatus.message }}</span>
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 资源合成视频 -->
+        <div class="view-container" :class="{ active: state.currentView === 'compose' }">
+          <div class="section">
+            <h1 class="ui header">
+              <i class="film icon"></i>
+              <div class="content">
+                资源合成视频
+                <div class="sub header">将多个资源（图片、视频、音频）合成为一个新视频</div>
+              </div>
+            </h1>
+
+            <!-- 资源列表 -->
+            <div class="ui segment compact-segment">
+              <h3 class="ui dividing header" style="font-size: 0.95em; margin-bottom: 0.75rem;">
+                资源列表
+                <button class="ui mini button" @click="clearResources" style="float: right;">
+                  <i class="trash icon"></i> 清空
+                </button>
+              </h3>
+              
+              <!-- 添加资源 -->
+              <div class="ui form" style="margin-bottom: 1rem;">
+                <div class="field">
+                  <label>添加资源（网络 URL）</label>
+                  <div class="ui action input" style="display: flex;">
+                    <input type="text" v-model="state.newResourceUrl" placeholder="输入资源 URL" @keyup.enter="addResourceFromUrl" style="flex: 1;">
+                    <button class="ui primary button" @click="addResourceFromUrl" :disabled="!state.newResourceUrl || state.loading.addResource" :class="{ loading: state.loading.addResource }" style="margin-left: 0.5rem;">
+                      <i class="plus icon"></i> 添加
+                    </button>
+                  </div>
+                  <p style="color: #999; font-size: 0.8em; margin-top: 0.5rem;">支持图片、视频、音频格式</p>
+                </div>
+              </div>
+
+              <!-- 资源列表显示 -->
+              <div v-if="state.resources.length === 0" class="ui message">
+                <p>还没有添加任何资源，请在上方输入 URL 添加</p>
+              </div>
+              
+              <div v-else class="ui relaxed divided list" style="max-height: 400px; overflow-y: auto;">
+                <div 
+                  v-for="(resource, index) in state.resources" 
+                  :key="resource.id"
+                  class="item"
+                  style="padding: 0.75rem 0; display: flex; align-items: center; justify-content: space-between;"
+                >
+                  <div style="flex: 1; min-width: 0;">
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                      <i :class="getResourceIcon(resource.type) + ' icon'" :style="{ color: getResourceColor(resource.type) }"></i>
+                      <div style="flex: 1; min-width: 0;">
+                        <div style="font-weight: 500; word-break: break-all;">{{ resource.originalName || resource.filename }}</div>
+                        <div style="font-size: 0.85em; color: #999; margin-top: 0.25rem;">
+                          类型: {{ getResourceTypeName(resource.type) }}
+                          <span v-if="resource.type === 'image'"> · 时长: {{ resource.duration || 3 }}秒</span>
+                          <span v-if="resource.transition && resource.transition !== 'none'"> · 过渡: {{ getTransitionName(resource.transition) }}</span>
+                          <span v-if="resource.type === 'audio' && resource.volume !== 100"> · 音量: {{ resource.volume }}%</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div style="display: flex; gap: 0.5rem; align-items: center;">
+                    <button 
+                      class="ui mini button"
+                      @click="editResource(index)"
+                      style="white-space: nowrap;"
+                    >
+                      <i class="edit icon"></i> 编辑
+                    </button>
+                    <button 
+                      class="ui mini red button"
+                      @click="removeResource(index)"
+                      style="white-space: nowrap;"
+                    >
+                      <i class="trash icon"></i> 删除
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 资源编辑对话框 -->
+            <div v-if="state.editingResourceIndex !== null" class="ui segment compact-segment">
+              <h3 class="ui dividing header" style="font-size: 0.95em; margin-bottom: 0.75rem;">编辑资源</h3>
+              <div class="ui form">
+                <!-- 图片配置 -->
+                <template v-if="state.resources[state.editingResourceIndex].type === 'image'">
+                  <div class="field">
+                    <label>图片显示时长（秒）</label>
+                    <input type="number" v-model.number="state.resources[state.editingResourceIndex].duration" min="0.1" step="0.1" placeholder="3">
+                    <p style="font-size: 0.75em; color: #999; margin-top: 0.25rem;">图片在视频中显示的时长，推荐：2-5秒</p>
+                  </div>
+                  
+                  <h4 class="ui dividing header" style="font-size: 0.85em; margin-top: 1rem; margin-bottom: 0.5rem;">显示控制</h4>
+                  <div class="two fields">
+                    <div class="field">
+                      <label>位置</label>
+                      <select v-model="state.resources[state.editingResourceIndex].position" class="ui dropdown">
+                        <option value="center">居中</option>
+                        <option value="top-left">左上</option>
+                        <option value="top-right">右上</option>
+                        <option value="bottom-left">左下</option>
+                        <option value="bottom-right">右下</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label>缩放模式</label>
+                      <select v-model="state.resources[state.editingResourceIndex].scaleMode" class="ui dropdown">
+                        <option value="fit">适应（保持比例，可能有黑边）</option>
+                        <option value="fill">填充（保持比例，可能裁剪）</option>
+                        <option value="crop">裁剪（填满画面）</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="two fields">
+                    <div class="field">
+                      <label>旋转角度（度）</label>
+                      <input type="number" v-model.number="state.resources[state.editingResourceIndex].rotation" min="-360" max="360" step="90" placeholder="0">
+                      <p style="font-size: 0.75em; color: #999; margin-top: 0.25rem;">顺时针旋转角度</p>
+                    </div>
+                    <div class="field">
+                      <label>透明度（%）</label>
+                      <input type="number" v-model.number="state.resources[state.editingResourceIndex].opacity" min="0" max="100" step="1" placeholder="100">
+                      <p style="font-size: 0.75em; color: #999; margin-top: 0.25rem;">0为完全透明，100为完全不透明</p>
+                    </div>
+                  </div>
+                  
+                  <h4 class="ui dividing header" style="font-size: 0.85em; margin-top: 1rem; margin-bottom: 0.5rem;">过渡效果</h4>
+                  <div class="field">
+                    <label>过渡效果</label>
+                    <select v-model="state.resources[state.editingResourceIndex].transition" class="ui dropdown">
+                      <option value="none">无过渡</option>
+                      <option value="fade">淡入淡出</option>
+                      <option value="fadein">淡入</option>
+                      <option value="fadeout">淡出</option>
+                      <option value="slideLeft">从左滑入</option>
+                      <option value="slideRight">从右滑入</option>
+                      <option value="slideUp">从下滑入</option>
+                      <option value="slideDown">从上滑入</option>
+                      <option value="zoomIn">放大</option>
+                      <option value="zoomOut">缩小</option>
+                    </select>
+                    <p style="font-size: 0.75em; color: #999; margin-top: 0.25rem;">选择图片的过渡效果</p>
+                  </div>
+                  <div v-if="state.resources[state.editingResourceIndex].transition && state.resources[state.editingResourceIndex].transition !== 'none'" class="field">
+                    <label>过渡时长（秒）</label>
+                    <input type="number" v-model.number="state.resources[state.editingResourceIndex].transitionDuration" min="0.1" max="2" step="0.1" placeholder="0.5">
+                    <p style="font-size: 0.75em; color: #999; margin-top: 0.25rem;">过渡效果的持续时间，推荐：0.3-1秒</p>
+                  </div>
+                </template>
+                
+                <!-- 视频配置 -->
+                <template v-if="state.resources[state.editingResourceIndex].type === 'video'">
+                  <div class="two fields">
+                    <div class="field">
+                      <label>开始时间（秒）</label>
+                      <input type="number" v-model.number="state.resources[state.editingResourceIndex].startTime" min="0" step="0.1" placeholder="0">
+                      <p style="font-size: 0.75em; color: #999; margin-top: 0.25rem;">从视频的哪个时间点开始</p>
+                    </div>
+                    <div class="field">
+                      <label>持续时间（秒，留空则使用全部）</label>
+                      <input type="number" v-model.number="state.resources[state.editingResourceIndex].duration" min="0" step="0.1" placeholder="全部">
+                      <p style="font-size: 0.75em; color: #999; margin-top: 0.25rem;">视频片段的长度，留空则使用全部</p>
+                    </div>
+                  </div>
+                  
+                  <h4 class="ui dividing header" style="font-size: 0.85em; margin-top: 1rem; margin-bottom: 0.5rem;">显示控制</h4>
+                  <div class="two fields">
+                    <div class="field">
+                      <label>位置</label>
+                      <select v-model="state.resources[state.editingResourceIndex].position" class="ui dropdown">
+                        <option value="center">居中</option>
+                        <option value="top-left">左上</option>
+                        <option value="top-right">右上</option>
+                        <option value="bottom-left">左下</option>
+                        <option value="bottom-right">右下</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label>缩放模式</label>
+                      <select v-model="state.resources[state.editingResourceIndex].scaleMode" class="ui dropdown">
+                        <option value="fit">适应（保持比例，可能有黑边）</option>
+                        <option value="fill">填充（保持比例，可能裁剪）</option>
+                        <option value="crop">裁剪（填满画面）</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="two fields">
+                    <div class="field">
+                      <label>旋转角度（度）</label>
+                      <input type="number" v-model.number="state.resources[state.editingResourceIndex].rotation" min="-360" max="360" step="90" placeholder="0">
+                      <p style="font-size: 0.75em; color: #999; margin-top: 0.25rem;">顺时针旋转角度</p>
+                    </div>
+                    <div class="field">
+                      <label>透明度（%）</label>
+                      <input type="number" v-model.number="state.resources[state.editingResourceIndex].opacity" min="0" max="100" step="1" placeholder="100">
+                      <p style="font-size: 0.75em; color: #999; margin-top: 0.25rem;">0为完全透明，100为完全不透明</p>
+                    </div>
+                  </div>
+                  
+                  <h4 class="ui dividing header" style="font-size: 0.85em; margin-top: 1rem; margin-bottom: 0.5rem;">过渡效果</h4>
+                  <div class="field">
+                    <label>过渡效果</label>
+                    <select v-model="state.resources[state.editingResourceIndex].transition" class="ui dropdown">
+                      <option value="none">无过渡</option>
+                      <option value="fade">淡入淡出</option>
+                      <option value="fadein">淡入</option>
+                      <option value="fadeout">淡出</option>
+                      <option value="slideLeft">从左滑入</option>
+                      <option value="slideRight">从右滑入</option>
+                      <option value="slideUp">从下滑入</option>
+                      <option value="slideDown">从上滑入</option>
+                      <option value="zoomIn">放大</option>
+                      <option value="zoomOut">缩小</option>
+                    </select>
+                    <p style="font-size: 0.75em; color: #999; margin-top: 0.25rem;">选择视频的过渡效果</p>
+                  </div>
+                  <div v-if="state.resources[state.editingResourceIndex].transition && state.resources[state.editingResourceIndex].transition !== 'none'" class="field">
+                    <label>过渡时长（秒）</label>
+                    <input type="number" v-model.number="state.resources[state.editingResourceIndex].transitionDuration" min="0.1" max="2" step="0.1" placeholder="0.5">
+                  </div>
+                </template>
+                
+                <!-- 音频配置 -->
+                <template v-if="state.resources[state.editingResourceIndex].type === 'audio'">
+                  <div class="two fields">
+                    <div class="field">
+                      <label>开始时间（秒）</label>
+                      <input type="number" v-model.number="state.resources[state.editingResourceIndex].startTime" min="0" step="0.1" placeholder="0">
+                      <p style="font-size: 0.75em; color: #999; margin-top: 0.25rem;">从音频的哪个时间点开始</p>
+                    </div>
+                    <div class="field">
+                      <label>持续时间（秒，留空则使用全部）</label>
+                      <input type="number" v-model.number="state.resources[state.editingResourceIndex].duration" min="0" step="0.1" placeholder="全部">
+                      <p style="font-size: 0.75em; color: #999; margin-top: 0.25rem;">音频片段的长度，留空则使用全部</p>
+                    </div>
+                  </div>
+                  <div class="field">
+                    <label>淡入淡出</label>
+                    <select v-model="state.resources[state.editingResourceIndex].fade" class="ui dropdown">
+                      <option value="none">无</option>
+                      <option value="fadein">淡入</option>
+                      <option value="fadeout">淡出</option>
+                      <option value="both">淡入淡出</option>
+                    </select>
+                    <p style="font-size: 0.75em; color: #999; margin-top: 0.25rem;">音频的淡入淡出效果</p>
+                  </div>
+                  <div v-if="state.resources[state.editingResourceIndex].fade && state.resources[state.editingResourceIndex].fade !== 'none'" class="field">
+                    <label>淡入淡出时长（秒）</label>
+                    <input type="number" v-model.number="state.resources[state.editingResourceIndex].fadeDuration" min="0.1" max="3" step="0.1" placeholder="1">
+                    <p style="font-size: 0.75em; color: #999; margin-top: 0.25rem;">淡入淡出效果的持续时间</p>
+                  </div>
+                  <div class="field">
+                    <label>音量（%）</label>
+                    <input type="number" v-model.number="state.resources[state.editingResourceIndex].volume" min="0" max="200" step="1" placeholder="100">
+                    <p style="font-size: 0.75em; color: #999; margin-top: 0.25rem;">音频音量，100为原始音量，范围：0-200</p>
+                  </div>
+                </template>
+                
+                <div class="field">
+                  <button class="ui primary button" @click="saveResourceEdit">保存</button>
+                  <button class="ui button" @click="cancelResourceEdit">取消</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 合成选项 -->
+            <div class="ui segment compact-segment">
+              <h3 class="ui dividing header" style="font-size: 0.95em; margin-bottom: 0.75rem;">合成选项</h3>
+              <div class="ui form">
+                <h4 class="ui dividing header" style="font-size: 0.9em; margin-top: 0.5rem; margin-bottom: 0.75rem;">视频尺寸</h4>
+                <div class="field">
+                  <label>常用尺寸预设</label>
+                  <select class="ui dropdown" @change="applyVideoSizePreset(state.videoSizePresets[parseInt($event.target.value)])">
+                    <option v-for="(preset, index) in state.videoSizePresets" :key="index" :value="index">
+                      {{ preset.name }}
+                    </option>
+                  </select>
+                  <p style="font-size: 0.75em; color: #999; margin-top: 0.25rem;">选择预设尺寸或手动输入自定义尺寸</p>
+                </div>
+                <div class="three fields">
+                  <div class="field">
+                    <label>宽度 (像素)</label>
+                    <input type="number" v-model.number="state.composeOptions.width" min="128" max="7680" step="1" placeholder="1280">
+                  </div>
+                  <div class="field">
+                    <label>高度 (像素)</label>
+                    <input type="number" v-model.number="state.composeOptions.height" min="128" max="4320" step="1" placeholder="720">
+                  </div>
+                  <div class="field">
+                    <label>帧率 (FPS)</label>
+                    <input type="number" v-model.number="state.composeOptions.fps" min="1" max="60" step="1" placeholder="25">
+                  </div>
+                </div>
+                
+                <h4 class="ui dividing header" style="font-size: 0.9em; margin-top: 1rem; margin-bottom: 0.75rem;">视频编码</h4>
+                <div class="three fields">
+                  <div class="field">
+                    <label>视频编码器</label>
+                    <select v-model="state.composeOptions.videoCodec" class="ui dropdown">
+                      <option value="libx264">H.264 (libx264)</option>
+                      <option value="libx265">H.265 (libx265)</option>
+                      <option value="libvpx-vp9">VP9 (libvpx-vp9)</option>
+                      <option value="libaom-av1">AV1 (libaom-av1)</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label>编码预设</label>
+                    <select v-model="state.composeOptions.videoPreset" class="ui dropdown">
+                      <option value="ultrafast">ultrafast (最快)</option>
+                      <option value="superfast">superfast</option>
+                      <option value="veryfast">veryfast</option>
+                      <option value="faster">faster</option>
+                      <option value="fast">fast</option>
+                      <option value="medium" selected>medium (平衡)</option>
+                      <option value="slow">slow</option>
+                      <option value="slower">slower</option>
+                      <option value="veryslow">veryslow (最慢)</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label>CRF 质量 (0-51)</label>
+                    <input type="number" v-model.number="state.composeOptions.videoCrf" min="0" max="51" step="1" placeholder="23">
+                    <p style="font-size: 0.75em; color: #999; margin-top: 0.25rem;">数值越小质量越高，18-28推荐</p>
+                  </div>
+                </div>
+                <div class="field">
+                  <label>视频码率 (可选，留空使用CRF)</label>
+                  <input type="text" v-model="state.composeOptions.videoBitrate" placeholder="2000k">
+                  <p style="font-size: 0.75em; color: #999; margin-top: 0.25rem;">例如：2000k, 5M。如果设置了CRF，此参数将被忽略</p>
+                </div>
+                
+                <h4 class="ui dividing header" style="font-size: 0.9em; margin-top: 1rem; margin-bottom: 0.75rem;">音频编码</h4>
+                <div class="three fields">
+                  <div class="field">
+                    <label>音频编码器</label>
+                    <select v-model="state.composeOptions.audioCodec" class="ui dropdown">
+                      <option value="aac">AAC</option>
+                      <option value="mp3">MP3</option>
+                      <option value="opus">Opus</option>
+                      <option value="copy">复制原始</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label>音频码率</label>
+                    <input type="text" v-model="state.composeOptions.audioBitrate" placeholder="192k">
+                  </div>
+                  <div class="field">
+                    <label>采样率 (Hz)</label>
+                    <select v-model.number="state.composeOptions.audioSampleRate" class="ui dropdown">
+                      <option :value="44100">44100 (CD质量)</option>
+                      <option :value="48000">48000 (专业)</option>
+                      <option :value="96000">96000 (高保真)</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="field">
+                  <label>声道数</label>
+                  <select v-model.number="state.composeOptions.audioChannels" class="ui dropdown">
+                    <option :value="1">单声道 (Mono)</option>
+                    <option :value="2">立体声 (Stereo)</option>
+                  </select>
+                </div>
+                
+                <h4 class="ui dividing header" style="font-size: 0.9em; margin-top: 1rem; margin-bottom: 0.75rem;">其他设置</h4>
+                <div class="field">
+                  <label>背景颜色</label>
+                  <div class="ui action input">
+                    <input type="color" v-model="state.composeOptions.backgroundColor" style="width: 60px; padding: 0.5rem;">
+                    <input type="text" v-model="state.composeOptions.backgroundColor" placeholder="#000000" style="flex: 1;">
+                  </div>
+                  <p style="font-size: 0.75em; color: #999; margin-top: 0.25rem;">视频背景颜色（十六进制格式，如 #000000）</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- 合成按钮和结果 -->
+            <div class="ui segment compact-segment">
+              <button class="ui primary button" :class="{ loading: state.loading.compose }" @click="handleCompose" :disabled="state.resources.length === 0 || state.loading.compose">
+                <i class="play icon"></i> 开始合成视频
+              </button>
+              
+              <div v-if="state.composeResultFile" style="margin-top: 1rem;">
+                <h4>合成结果</h4>
+                <video :src="state.composeResultFile" class="video-preview" controls></video>
+                <div style="margin-top: 0.75rem; text-align: center;">
+                  <a :href="state.composeResultFile" :download="state.composeResultFilename" class="ui primary button">
+                    <i class="download icon"></i> 下载视频
+                  </a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+
+        <!-- 文件管理 -->
+        <div class="view-container" :class="{ active: state.currentView === 'files' }">
+          <div class="section">
+            <h1 class="ui header">
+              <i class="folder icon"></i>
+              <div class="content">
+                文件管理
+                <div class="sub header">查看和管理 uploads 和 output 目录下的文件</div>
+              </div>
+            </h1>
+            <div class="ui segment compact-segment">
+              <h3 class="ui dividing header" style="font-size: 0.95em; margin-bottom: 0.75rem;">选择目录</h3>
+              <div class="ui two buttons">
+                <button 
+                  class="ui button" 
+                  :class="{ primary: state.filesCurrentDirectory === 'uploads' }"
+                  @click="switchFilesDirectory('uploads')"
+                >
+                  <i class="upload icon"></i> 上传文件 (uploads)
+                </button>
+                <button 
+                  class="ui button" 
+                  :class="{ primary: state.filesCurrentDirectory === 'output' }"
+                  @click="switchFilesDirectory('output')"
+                >
+                  <i class="download icon"></i> 输出文件 (output)
+                </button>
+              </div>
+            </div>
+            <div class="ui segment compact-segment">
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
+                <h3 class="ui dividing header" style="font-size: 0.95em; margin: 0;">
+                  {{ state.filesCurrentDirectory === 'uploads' ? '上传文件' : '输出文件' }}列表
+                </h3>
+                <div>
+                  <button 
+                    class="ui small button" 
+                    @click="loadFilesList(state.filesCurrentDirectory)"
+                    :class="{ loading: state.filesLoading[state.filesCurrentDirectory] }"
+                  >
+                    <i class="refresh icon"></i> 刷新
+                  </button>
+                </div>
+              </div>
+              <div v-if="state.filesLoading[state.filesCurrentDirectory]" class="ui active centered inline loader"></div>
+              <div v-else-if="state.filesList[state.filesCurrentDirectory].length === 0" class="ui message">
+                <p>目录为空，暂无文件</p>
+              </div>
+              <div v-else class="ui relaxed divided list">
+                <div 
+                  v-for="file in state.filesList[state.filesCurrentDirectory]" 
+                  :key="file.name"
+                  class="item"
+                  style="padding: 0.75rem 0; display: flex; align-items: center; justify-content: space-between;"
+                >
+                  <div style="flex: 1; min-width: 0;">
+                    <div style="font-weight: 500; word-break: break-all;">{{ file.name }}</div>
+                    <div style="font-size: 0.85em; color: #999; margin-top: 0.25rem;">
+                      {{ file.sizeFormatted }} · {{ new Date(file.modified).toLocaleString('zh-CN') }}
+                    </div>
+                  </div>
+                  <div style="display: flex; gap: 0.5rem;">
+                    <a 
+                      :href="file.url" 
+                      :download="file.name"
+                      class="ui mini button"
+                    >
+                      <i class="download icon"></i> 下载
+                    </a>
+                    <button 
+                      class="ui mini red button"
+                      @click="deleteFile(state.filesCurrentDirectory, file.name)"
+                    >
+                      <i class="trash icon"></i> 删除
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <aside class="debug-panel">
+        <div class="debug-panel-header">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
+            <h3 class="ui header" style="margin: 0; font-size: 1em;">
+              <i class="bug icon"></i>
+              <div class="content">
+                调试输出
+                <div class="sub header" style="font-size: 0.75em;">实时调试信息和日志</div>
+              </div>
+            </h3>
+            <button class="ui tiny button" @click="clearDebugLog">清空</button>
+          </div>
+          <div class="debug-tabs">
+            <div 
+              v-for="tab in debugTabs" 
+              :key="tab.id"
+              class="debug-tab"
+              :class="{ active: state.currentDebugTab === tab.id }"
+              @click="state.currentDebugTab = tab.id"
+            >
+              {{ tab.name }}
+              <span v-if="tab.count > 0" style="margin-left: 0.25rem;">({{ tab.count }})</span>
+            </div>
+          </div>
+        </div>
+        <div class="debug-panel-content">
+          <div class="debug-log">
+            <div v-if="filteredDebugLogs.length === 0" style="color: #888; text-align: center; padding: 2rem;">
+              暂无调试信息
+            </div>
+            <div 
+              v-for="(log, index) in filteredDebugLogs" 
+              :key="index"
+              class="debug-log-item"
+            >
+              <div class="debug-log-time">{{ log.time }}</div>
+              <div class="debug-log-content" :class="log.type">{{ log.content }}</div>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <script src="/lib/semantic.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
+

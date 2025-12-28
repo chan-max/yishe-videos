@@ -5,27 +5,38 @@ name: Build and Push Docker Image
 #    - DOCKER_USERNAME: Docker Hub 用户名（例如：1sdesign）
 #    - DOCKER_PASSWORD: Docker Hub 密码或访问令牌（Access Token）
 #    推荐使用访问令牌：https://hub.docker.com/settings/security -> New Access Token
+#    - SERVER_HOST: 服务器地址（例如：192.168.1.100 或 example.com）
+#      如果不设置此 secret，将跳过自动部署步骤
+#    - SERVER_USERNAME: SSH 用户名（例如：root）
+#    - SERVER_PASSWORD: SSH 密码（如果使用 SSH 密钥，可留空）
+#    - SERVER_SSH_KEY: SSH 私钥（可选，推荐使用，比密码更安全）
+#      如果设置了此密钥，SERVER_PASSWORD 可留空
+#    - SERVER_DEPLOY_PATH: 服务器上项目路径（可选，默认为 /workspace/yishe-videos）
+#    - SERVER_PORT: SSH 端口（可选，默认为 22）
 # 2. 工作流程：
 #    - 当代码推送到 main 分支时自动触发
 #    - 从 package.json 读取版本号
 #    - 构建 Docker 镜像，标签为版本号（如：1.0.0）和 latest
 #    - 推送到 Docker Hub
+#    - 通过 SSH 连接到服务器，拉取最新镜像并重启服务
 # 3. 使用方法：
 #    - 修改 package.json 中的 version 字段（如：1.0.0 -> 1.0.1）
 #    - 提交代码并推送到 main 分支
-#    - GitHub Actions 会自动构建并推送镜像
+#    - 注意：只有 package.json 文件变化时才会触发构建和部署
+#    - GitHub Actions 会自动构建、推送镜像并部署到服务器
+# 4. 服务器准备工作：
+#    - 确保服务器已安装 Docker 和 Docker Compose
+#    - 在服务器上创建项目目录（默认：/workspace/yishe-videos）
+#    - 在项目目录中放置 docker-compose.hub.yml 文件
+#    - 确保 Docker 有权限拉取镜像（如果使用私有仓库，需要先登录）
 
 on:
   push:
     branches:
       - main  # 监听 main 分支的推送
-    # paths 过滤器是可选的，如果需要任何文件变化都触发，可以删除 paths 部分
-    # paths:
-    #   - 'package.json'
-    #   - 'Dockerfile'
-    #   - 'server.js'
-    #   - 'lib/**'
-    #   - 'public/**'
+    paths:
+      # 只在 package.json 变化时触发（版本号变化）
+      - 'package.json'
 
 jobs:
   build-and-push:
@@ -94,4 +105,140 @@ jobs:
           echo "# 运行容器" >> $GITHUB_STEP_SUMMARY
           echo "docker run -d -p 1571:1571 ${{ secrets.DOCKER_USERNAME }}/yishe-videos:${{ steps.package-version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Check deployment configuration
+        id: check-deploy
+        run: |
+          if [ -z "${{ secrets.SERVER_HOST }}" ]; then
+            echo "⚠️  SERVER_HOST 未配置，跳过自动部署"
+            echo "skip_deploy=true" >> $GITHUB_OUTPUT
+          else
+            echo "✅ 检测到 SERVER_HOST 配置，将执行自动部署"
+            echo "skip_deploy=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Deploy to Server
+        id: deploy
+        if: steps.check-deploy.outputs.skip_deploy == 'false'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USERNAME }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          envs: DEPLOY_PATH,DOCKER_USERNAME
+          script: |
+            # 设置部署路径（从环境变量获取，如果未设置则使用默认路径）
+            DEPLOY_PATH="${DEPLOY_PATH:-/workspace/yishe-videos}"
+            DOCKER_USERNAME="${DOCKER_USERNAME:-1sdesign}"
+            
+            echo "🚀 开始部署到服务器..."
+            echo "📂 部署路径: $DEPLOY_PATH"
+            
+            # 检查并创建部署目录（如果不存在）
+            if [ ! -d "$DEPLOY_PATH" ]; then
+              echo "📁 目录不存在，正在创建: $DEPLOY_PATH"
+              mkdir -p $DEPLOY_PATH || { echo "❌ 错误: 无法创建目录 $DEPLOY_PATH"; exit 1; }
+            fi
+            
+            # 进入部署目录
+            cd $DEPLOY_PATH || { echo "❌ 错误: 无法进入目录 $DEPLOY_PATH"; exit 1; }
+            
+            # 检查 docker-compose.hub.yml 文件是否存在，如果不存在则自动创建
+            if [ ! -f "docker-compose.hub.yml" ]; then
+              echo "📄 docker-compose.hub.yml 文件不存在，正在自动创建..."
+              cat > docker-compose.hub.yml << EOF
+            version: '3.8'
+            
+            services:
+              yishe-videos:
+                # 使用 Docker Hub 镜像（发布后使用此配置）
+                image: ${DOCKER_USERNAME}/yishe-videos:latest
+                container_name: yishe-videos
+                ports:
+                  # 格式：宿主机端口:容器端口
+                  # 将容器的 1571 端口映射到宿主机的 1571 端口
+                  - "1571:1571"
+                volumes:
+                  # 数据持久化：将容器内的目录挂载到宿主机
+                  # 这样即使容器删除，数据也不会丢失
+                  - ./uploads:/app/uploads
+                  - ./output:/app/output
+                  - ./template:/app/template
+                environment:
+                  # 环境变量
+                  - NODE_ENV=production
+                  - PORT=1571
+                restart: unless-stopped
+                # 资源限制（可选）
+                deploy:
+                  resources:
+                    limits:
+                      cpus: '2'
+                      memory: 2G
+                    reservations:
+                      cpus: '0.5'
+                      memory: 512M
+            EOF
+              echo "✅ docker-compose.hub.yml 文件创建成功（镜像: ${DOCKER_USERNAME}/yishe-videos:latest）"
+            fi
+            
+            # 从 docker-compose.hub.yml 文件中提取 volumes 的相对路径并创建目录
+            # 这样可以自动适配任何 volumes 配置，无需硬编码目录名
+            echo "📁 根据 docker-compose.hub.yml 中的 volumes 配置创建必要的目录..."
+            # 提取 volumes 中以 ./ 开头的相对路径（例如: ./uploads:/app/uploads -> uploads）
+            grep -E '^\s+-\s+\./' docker-compose.hub.yml 2>/dev/null | sed -E 's/.*\.\/([^:]+):.*/\1/' | while read -r dir; do
+              if [ -n "$dir" ]; then
+                mkdir -p "$dir"
+                echo "✅ 已创建目录: $dir"
+              fi
+            done
+            
+            COMPOSE_FILE="docker-compose.hub.yml"
+            echo "📄 使用 Compose 文件: $COMPOSE_FILE"
+            
+            # 拉取最新镜像
+            echo "📥 正在拉取最新镜像..."
+            docker-compose -f $COMPOSE_FILE pull || { echo "❌ 错误: 拉取镜像失败"; exit 1; }
+            
+            # 停止旧容器并启动新容器（使用 up -d --force-recreate 确保使用新镜像）
+            echo "🔄 正在重启服务..."
+            docker-compose -f $COMPOSE_FILE up -d --force-recreate || { echo "❌ 错误: 启动服务失败"; exit 1; }
+            
+            # 等待容器启动
+            sleep 5
+            
+            # 检查容器状态
+            echo "🔍 检查容器状态..."
+            if docker-compose -f $COMPOSE_FILE ps | grep -q "Up"; then
+              echo "✅ 服务部署成功！"
+              docker-compose -f $COMPOSE_FILE ps
+            else
+              echo "❌ 错误: 容器未正常运行"
+              docker-compose -f $COMPOSE_FILE logs --tail=50
+              exit 1
+            fi
+            
+            # 清理未使用的镜像（可选，节省空间）
+            echo "🧹 清理未使用的镜像..."
+            docker image prune -f || true
+            
+            echo "🎉 部署完成！"
+        env:
+          DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH || '/workspace/yishe-videos' }}
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+
+      - name: Deploy Summary
+        if: steps.deploy.outcome == 'success'
+        run: |
+          echo "## ✅ 服务器部署成功" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**服务器**: \`${{ secrets.SERVER_HOST }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**部署路径**: \`${{ secrets.SERVER_DEPLOY_PATH || '/workspace/yishe-videos' }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**版本**: \`${{ steps.package-version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✨ 服务已自动更新并重启" >> $GITHUB_STEP_SUMMARY
 

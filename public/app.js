@@ -17,7 +17,8 @@ function initApp() {
   
   const { createApp, reactive, watch, onMounted, computed, ref } = Vue;
 
-  const BASE_URL = 'http://localhost:1571';
+  // 使用相对路径，自动使用当前请求的协议和主机
+  const BASE_URL = '';
 
   createApp({
     setup() {

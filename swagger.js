@@ -13,8 +13,8 @@ const options = {
     },
     servers: [
       {
-        url: 'http://localhost:1571',
-        description: '开发服务器',
+        url: '/',
+        description: '当前服务器',
       },
     ],
     tags: [

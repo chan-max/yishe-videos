@@ -345,12 +345,14 @@
                 <div class="field">
                   <label>添加资源（网络 URL）</label>
                   <div class="ui action input" style="display: flex;">
-                    <input type="text" v-model="state.newResourceUrl" placeholder="输入资源 URL" @keyup.enter="addResourceFromUrl" style="flex: 1;">
+                    <input type="text" v-model="state.newResourceUrl" placeholder="输入资源 URL（支持图片、视频、音频）" @keyup.enter="addResourceFromUrl" style="flex: 1;">
                     <button class="ui primary button" @click="addResourceFromUrl" :disabled="!state.newResourceUrl || state.loading.addResource" :class="{ loading: state.loading.addResource }" style="margin-left: 0.5rem;">
                       <i class="plus icon"></i> 添加
                     </button>
                   </div>
-                  <p style="color: #999; font-size: 0.8em; margin-top: 0.5rem;">支持图片、视频、音频格式</p>
+                  <p style="color: #999; font-size: 0.8em; margin-top: 0.5rem;">
+                    支持图片、视频、音频格式。URL资源将在合成时自动下载处理，无需预先上传。
+                  </p>
                 </div>
               </div>
 
@@ -372,10 +374,15 @@
                       <div style="flex: 1; min-width: 0;">
                         <div style="font-weight: 500; word-break: break-all;">{{ resource.originalName || resource.filename }}</div>
                         <div style="font-size: 0.85em; color: #999; margin-top: 0.25rem;">
-                          类型: {{ getResourceTypeName(resource.type) }}
+                          <span v-if="resource.url" style="color: #21ba45; font-weight: 500;">● 线上资源</span>
+                          <span v-else style="color: #2185d0; font-weight: 500;">● 已上传</span>
+                          · 类型: {{ getResourceTypeName(resource.type) }}
                           <span v-if="resource.type === 'image'"> · 时长: {{ resource.duration || 3 }}秒</span>
                           <span v-if="resource.transition && resource.transition !== 'none'"> · 过渡: {{ getTransitionName(resource.transition) }}</span>
                           <span v-if="resource.type === 'audio' && resource.volume !== 100"> · 音量: {{ resource.volume }}%</span>
+                        </div>
+                        <div v-if="resource.url" style="font-size: 0.75em; color: #888; margin-top: 0.25rem; word-break: break-all; max-width: 600px;">
+                          {{ resource.url }}
                         </div>
                       </div>
                     </div>

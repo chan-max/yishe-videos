@@ -7,6 +7,8 @@ if (process.env.FFMPEG_PATH) {
   ffmpeg.setFfmpegPath(process.env.FFMPEG_PATH);
 }
 
+
+
 const inputImage = path.resolve(__dirname, 'test.jpg');
 const outputVideo = path.resolve(__dirname, 'output.mp4');
 

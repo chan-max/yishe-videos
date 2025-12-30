@@ -231,7 +231,7 @@ app.post('/api/upload', async (req, res) => {
  *             properties:
  *               resources:
  *                 type: array
- *                 description: 资源数组，每个资源包含 type, filename, duration 等
+ *                 description: 资源数组，每个资源包含 type, filename或url, duration 等
  *                 items:
  *                   type: object
  *                   properties:
@@ -240,6 +240,11 @@ app.post('/api/upload', async (req, res) => {
  *                       enum: [image, video, audio]
  *                     filename:
  *                       type: string
+ *                       description: 已上传的文件名（二选一）
+ *                     url:
+ *                       type: string
+ *                       format: uri
+ *                       description: 线上资源URL（二选一，如果提供url则优先使用）
  *                     duration:
  *                       type: number
  *                       description: 持续时间（秒），图片必填
@@ -275,18 +280,56 @@ app.post('/api/compose', async (req, res) => {
     
     // 验证资源并构建路径
     const resourcePaths = [];
+    const downloadedFiles = []; // 记录下载的临时文件，用于后续清理
+    
     for (const resource of resources) {
-      if (!resource.type || !resource.filename) {
-        return res.status(400).json({ error: '资源必须包含 type 和 filename' });
+      if (!resource.type) {
+        return res.status(400).json({ error: '资源必须包含 type' });
+      }
+      
+      // 必须提供 filename 或 url 之一
+      if (!resource.filename && !resource.url) {
+        return res.status(400).json({ error: '资源必须包含 filename 或 url' });
       }
       
       if (!['image', 'video', 'audio'].includes(resource.type)) {
         return res.status(400).json({ error: `不支持的资源类型: ${resource.type}`});
       }
       
-      const filePath = path.join(uploadsDir, resource.filename);
-      if (!fs.existsSync(filePath)) {
-        return res.status(404).json({ error: `文件不存在: ${resource.filename}` });
+      let filePath;
+      let isDownloaded = false;
+      
+      // 优先使用 url，如果没有 url 则使用 filename
+      if (resource.url) {
+        // 线上资源，需要先下载
+        try {
+          console.log(`开始下载资源: ${resource.url}`);
+          const downloadResult = await downloadFromUrl(resource.url);
+          // 移动到 uploads 目录
+          const finalPath = path.join(uploadsDir, downloadResult.filename);
+          try {
+            fs.renameSync(downloadResult.path, finalPath);
+          } catch (renameError) {
+            if (renameError.code === 'EXDEV' || renameError.message.includes('cross-device')) {
+              fs.copyFileSync(downloadResult.path, finalPath);
+              fs.unlinkSync(downloadResult.path);
+            } else {
+              throw renameError;
+            }
+          }
+          filePath = finalPath;
+          downloadedFiles.push(filePath); // 记录下载的文件
+          isDownloaded = true;
+          console.log(`资源下载成功: ${downloadResult.filename}`);
+        } catch (downloadError) {
+          return res.status(500).json({ error: `下载资源失败: ${downloadError.message}` });
+        }
+      } else {
+        // 使用已存在的文件
+        filePath = path.join(uploadsDir, resource.filename);
+        if (!fs.existsSync(filePath)) {
+          return res.status(404).json({ error: `文件不存在: ${resource.filename}` });
+        }
       }
       
       resourcePaths.push({
@@ -306,41 +349,63 @@ app.post('/api/compose', async (req, res) => {
       });
     }
     
-    // 生成输出文件名
-    const outputFilename = `composed_${Date.now()}.mp4`;
-    const outputPath = path.join(outputDir, outputFilename);
-    
-    // 调用合成方法
-    // 处理分辨率：支持 width/height 或 resolution 格式
-    let resolution = '1280x720';
-    if (options.width && options.height) {
-      resolution = `${options.width}x${options.height}`;
-    } else if (options.resolution) {
-      resolution = options.resolution;
+    // 定义清理函数（处理完成后可以选择是否清理下载的文件）
+    function cleanupDownloadedFiles() {
+      // 注意：这里可以选择是否清理下载的文件
+      // 如果希望保留文件供后续使用，可以注释掉清理逻辑
+      // downloadedFiles.forEach(tempFile => {
+      //   if (fs.existsSync(tempFile)) {
+      //     try {
+      //       fs.unlinkSync(tempFile);
+      //     } catch (e) {
+      //       console.warn(`清理下载文件失败: ${tempFile}`, e.message);
+      //     }
+      //   }
+      // });
     }
     
-    const result = await ffmpeg.composeVideo(resourcePaths, outputPath, {
-      resolution: resolution,
-      width: options.width || 1280,
-      height: options.height || 720,
-      fps: options.fps || 25,
-      videoCodec: options.videoCodec || 'libx264',
-      videoPreset: options.videoPreset || 'medium',
-      videoCrf: options.videoCrf !== undefined ? options.videoCrf : 23,
-      videoBitrate: options.videoBitrate || '2000k',
-      audioCodec: options.audioCodec || 'aac',
-      audioBitrate: options.audioBitrate || '192k',
-      audioSampleRate: options.audioSampleRate || 44100,
-      audioChannels: options.audioChannels || 2,
-      backgroundColor: options.backgroundColor || '#000000'
-    });
-    
-    res.json({
-      success: true,
-      outputFile: outputFilename,
-      path: `/output/${outputFilename}`,
-      command: result.command
-    });
+    try {
+      // 生成输出文件名
+      const outputFilename = `composed_${Date.now()}.mp4`;
+      const outputPath = path.join(outputDir, outputFilename);
+      
+      // 调用合成方法
+      // 处理分辨率：支持 width/height 或 resolution 格式
+      let resolution = '1280x720';
+      if (options.width && options.height) {
+        resolution = `${options.width}x${options.height}`;
+      } else if (options.resolution) {
+        resolution = options.resolution;
+      }
+      
+      const result = await ffmpeg.composeVideo(resourcePaths, outputPath, {
+        resolution: resolution,
+        width: options.width || 1280,
+        height: options.height || 720,
+        fps: options.fps || 25,
+        videoCodec: options.videoCodec || 'libx264',
+        videoPreset: options.videoPreset || 'medium',
+        videoCrf: options.videoCrf !== undefined ? options.videoCrf : 23,
+        videoBitrate: options.videoBitrate || '2000k',
+        audioCodec: options.audioCodec || 'aac',
+        audioBitrate: options.audioBitrate || '192k',
+        audioSampleRate: options.audioSampleRate || 44100,
+        audioChannels: options.audioChannels || 2,
+        backgroundColor: options.backgroundColor || '#000000'
+      });
+      
+      res.json({
+        success: true,
+        outputFile: outputFilename,
+        path: `/output/${outputFilename}`,
+        command: result.command,
+        downloadedFiles: downloadedFiles.map(f => path.basename(f)) // 返回下载的文件名列表
+      });
+    } catch (error) {
+      // 如果合成失败，可以选择清理下载的文件
+      // cleanupDownloadedFiles();
+      throw error;
+    }
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

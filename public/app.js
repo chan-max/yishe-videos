@@ -236,52 +236,77 @@ function initApp() {
         }
 
         const url = state.newResourceUrl.trim();
+        
+        // 验证 URL 格式
+        try {
+          new URL(url);
+        } catch (e) {
+          addDebugLog('无效的 URL 格式', 'error');
+          return;
+        }
+
         state.loading.addResource = true;
-        addDebugLog(`开始从 URL 下载资源: ${url}`, 'info');
+        addDebugLog(`添加资源 URL: ${url}`, 'info');
 
         try {
-          const { data } = await axios.post(`${BASE_URL}/api/upload`, {
-            url: url
-          }, {
-            headers: { 'Content-Type': 'application/json' }
-          });
-
-          if (data.success) {
-            const resourceType = detectResourceType(data.filename);
-            if (resourceType === 'unknown') {
-              addDebugLog(`无法识别资源类型: ${data.filename}`, 'error');
-              return;
+          // 从 URL 推断资源类型
+          const urlObj = new URL(url);
+          const pathname = urlObj.pathname.toLowerCase();
+          let resourceType = detectResourceType(pathname);
+          
+          // 如果无法从扩展名推断，尝试通过 HEAD 请求获取 Content-Type
+          if (resourceType === 'unknown') {
+            try {
+              const headResponse = await axios.head(url, { timeout: 5000 });
+              const contentType = headResponse.headers['content-type'] || '';
+              if (contentType.startsWith('image/')) {
+                resourceType = 'image';
+              } else if (contentType.startsWith('video/')) {
+                resourceType = 'video';
+              } else if (contentType.startsWith('audio/')) {
+                resourceType = 'audio';
+              }
+            } catch (e) {
+              // HEAD 请求失败，尝试使用默认类型
+              addDebugLog('无法确定资源类型，将尝试自动识别', 'info');
             }
-
-            const resource = {
-              id: Date.now() + Math.random(),
-              filename: data.filename,
-              originalName: data.originalName,
-              type: resourceType,
-              duration: resourceType === 'image' ? 3 : undefined, // 图片默认3秒
-              startTime: undefined,
-              // 图片和视频的过渡效果
-              transition: 'none',
-              transitionDuration: 0.5,
-              // 图片和视频的显示控制
-              position: 'center', // center, top-left, top-right, bottom-left, bottom-right
-              scaleMode: 'fit', // fit(适应), fill(填充), crop(裁剪)
-              rotation: 0, // 旋转角度（度）
-              opacity: 100, // 透明度（0-100）
-              // 音频的淡入淡出和音量
-              fade: 'none',
-              fadeDuration: 1,
-              volume: 100
-            };
-
-            state.resources.push(resource);
-            addDebugLog(`添加资源成功: ${data.originalName} (${getResourceTypeName(resourceType)})`, 'success');
-            state.newResourceUrl = '';
-          } else {
-            addDebugLog(`下载失败: ${data.error}`, 'error');
           }
+
+          // 如果仍然无法确定类型，要求用户选择
+          if (resourceType === 'unknown') {
+            const userChoice = confirm('无法自动识别资源类型，请选择：\n确定 = 图片\n取消 = 视频\n\n或者在 URL 中包含文件扩展名以便自动识别');
+            resourceType = userChoice ? 'image' : 'video';
+          }
+
+          const originalName = pathname.split('/').pop() || url.split('/').pop() || 'resource';
+          
+          const resource = {
+            id: Date.now() + Math.random(),
+            url: url, // 直接存储 URL
+            originalName: originalName,
+            type: resourceType,
+            duration: resourceType === 'image' ? 3 : undefined, // 图片默认3秒
+            startTime: undefined,
+            // 图片和视频的过渡效果
+            transition: 'none',
+            transitionDuration: 0.5,
+            // 图片和视频的显示控制
+            position: 'center', // center, top-left, top-right, bottom-left, bottom-right
+            scaleMode: 'fit', // fit(适应), fill(填充), crop(裁剪)
+            rotation: 0, // 旋转角度（度）
+            opacity: 100, // 透明度（0-100）
+            // 音频的淡入淡出和音量
+            fade: 'none',
+            fadeDuration: 1,
+            volume: 100,
+            source: 'url' // 标记资源来源为 URL
+          };
+
+          state.resources.push(resource);
+          addDebugLog(`添加资源成功: ${originalName} (${getResourceTypeName(resourceType)}) [URL]`, 'success');
+          state.newResourceUrl = '';
         } catch (e) {
-          addDebugLog(`下载错误: ${e.response?.data?.error || e.message}`, 'error');
+          addDebugLog(`添加资源错误: ${e.response?.data?.error || e.message}`, 'error');
         } finally {
           state.loading.addResource = false;
         }
@@ -343,25 +368,39 @@ function initApp() {
 
         state.loading.compose = true;
         const payload = {
-          resources: state.resources.map(r => ({
-            type: r.type,
-            filename: r.filename,
-            duration: r.duration,
-            startTime: r.startTime,
-            transition: r.transition || 'none',
-            transitionDuration: r.transitionDuration || 0.5,
-            position: r.position || 'center',
-            scaleMode: r.scaleMode || 'fit',
-            rotation: r.rotation || 0,
-            opacity: r.opacity !== undefined ? r.opacity : 100,
-            fade: r.fade || 'none',
-            fadeDuration: r.fadeDuration || 1,
-            volume: r.volume !== undefined ? r.volume : 100
-          })),
+          resources: state.resources.map(r => {
+            const resourceData = {
+              type: r.type,
+              duration: r.duration,
+              startTime: r.startTime,
+              transition: r.transition || 'none',
+              transitionDuration: r.transitionDuration || 0.5,
+              position: r.position || 'center',
+              scaleMode: r.scaleMode || 'fit',
+              rotation: r.rotation || 0,
+              opacity: r.opacity !== undefined ? r.opacity : 100,
+              fade: r.fade || 'none',
+              fadeDuration: r.fadeDuration || 1,
+              volume: r.volume !== undefined ? r.volume : 100
+            };
+            
+            // 如果资源有 URL，优先使用 URL；否则使用 filename
+            if (r.url) {
+              resourceData.url = r.url;
+            } else if (r.filename) {
+              resourceData.filename = r.filename;
+            }
+            
+            return resourceData;
+          }),
           options: state.composeOptions
         };
         
-        addDebugLog(`开始合成视频: ${JSON.stringify(payload, null, 2)}`, 'info');
+        addDebugLog(`开始合成视频，资源数量: ${state.resources.length}`, 'info');
+        const urlCount = state.resources.filter(r => r.url).length;
+        if (urlCount > 0) {
+          addDebugLog(`其中 ${urlCount} 个资源为线上URL，将在合成时自动下载`, 'info');
+        }
 
         try {
           const { data } = await axios.post(`${BASE_URL}/api/compose`, payload);
@@ -370,7 +409,12 @@ function initApp() {
             state.composeResultFile = `${BASE_URL}${data.path}`;
             state.composeResultFilename = data.outputFile;
             addDebugLog(`合成成功: ${data.outputFile}`, 'success');
-            addDebugLog(`执行的命令: ${data.command}`, 'info');
+            if (data.command) {
+              addDebugLog(`执行的命令: ${data.command}`, 'info');
+            }
+            if (data.downloadedFiles && data.downloadedFiles.length > 0) {
+              addDebugLog(`已下载的文件: ${data.downloadedFiles.join(', ')}`, 'info');
+            }
           } else {
             addDebugLog(`合成失败: ${data.error}`, 'error');
           }

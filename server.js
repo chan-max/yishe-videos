@@ -1,5 +1,4 @@
 const express = require('express');
-const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
@@ -10,6 +9,18 @@ const bodyParser = require('body-parser');
 const swaggerUi = require('swagger-ui-express');
 const swaggerSpec = require('./swagger');
 const ffmpeg = require('./lib/ffmpeg');
+
+// 尝试加载 sharp（如果已安装）
+let sharp = null;
+try {
+  sharp = require('sharp');
+} catch (e) {
+  console.warn('[图片处理] sharp 未安装，将使用 ImageMagick 处理图片（如果可用）');
+}
+
+// 图片尺寸限制（避免超大图片导致内存问题）
+const MAX_IMAGE_WIDTH = 2560;
+const MAX_IMAGE_HEIGHT = 2560;
 
 const app = express();
 const PORT = process.env.PORT || 1571;
@@ -36,35 +47,11 @@ const templateDir = path.join(__dirname, 'template');
   }
 });
 
-// 配置 multer 用于文件上传
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadsDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, uniqueSuffix + path.extname(file.originalname));
-  }
-});
-
-const upload = multer({
-  storage: storage,
-  limits: { fileSize: 500 * 1024 * 1024 }, // 500MB
-  fileFilter: (req, file, cb) => {
-    const allowedTypes = /mp4|avi|mov|mkv|flv|wmv|webm|m4v|3gp|mp3|wav|aac|ogg|jpg|jpeg|png|gif|bmp|webp/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
-    
-    if (mimetype && extname) {
-      return cb(null, true);
-    } else {
-      cb(new Error('不支持的文件格式'));
-    }
-  }
-});
+// multer 配置已移除（不再需要文件上传功能）
+// 所有接口现在都支持直接使用远程资源（url 参数），无需预先上传
 
 /**
- * 下载网络资源到 template 目录
+ * 下载网络资源到 uploads 目录（支持 HTTPS）
  */
 async function downloadFromUrl(url) {
   return new Promise((resolve, reject) => {
@@ -72,13 +59,30 @@ async function downloadFromUrl(url) {
       const urlObj = new URL(url);
       const protocol = urlObj.protocol === 'https:' ? https : http;
       
-      protocol.get(url, (response) => {
+      const options = {
+        timeout: 60000, // 60秒超时
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        },
+      };
+
+      // HTTPS 选项：忽略证书错误（用于开发环境）
+      if (urlObj.protocol === 'https:') {
+        options.rejectUnauthorized = false; // 允许自签名证书
+      }
+      
+      const request = protocol.get(url, options, (response) => {
+        // 处理重定向
+        if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+          return downloadFromUrl(response.headers.location).then(resolve).catch(reject);
+        }
+        
         if (response.statusCode !== 200) {
           reject(new Error(`下载失败: HTTP ${response.statusCode}`));
           return;
         }
         
-        let ext = path.extname(urlObj.pathname);
+        let ext = path.extname(urlObj.pathname).split('?')[0]; // 移除查询参数
         const contentType = response.headers['content-type'];
         
         if (!ext || ext === '') {
@@ -89,21 +93,96 @@ async function downloadFromUrl(url) {
             'video/x-msvideo': '.avi',
             'video/webm': '.webm',
             'image/jpeg': '.jpg',
+            'image/jpg': '.jpg',
             'image/png': '.png',
-            'image/gif': '.gif'
+            'image/gif': '.gif',
+            'image/webp': '.webp',
+            'image/bmp': '.bmp',
+            'audio/mpeg': '.mp3',
+            'audio/mp3': '.mp3',
+            'audio/wav': '.wav',
+            'audio/aac': '.aac',
+            'audio/ogg': '.ogg',
           };
-          ext = mimeToExt[contentType] || '.mp4';
+          const contentTypeBase = contentType ? contentType.split(';')[0].trim() : '';
+          ext = mimeToExt[contentTypeBase] || mimeToExt[contentType] || '.jpg';
         }
         
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
         const filename = `downloaded_${uniqueSuffix}${ext}`;
-        const filePath = path.join(templateDir, filename);
+        const filePath = path.join(uploadsDir, filename); // 直接保存到 uploads 目录
         
         const fileStream = fs.createWriteStream(filePath);
         response.pipe(fileStream);
         
-        fileStream.on('finish', () => {
+        fileStream.on('finish', async () => {
           fileStream.close();
+          
+          // 如果是图片，检查并调整尺寸（使用 ImageMagick 或 sharp）
+          const isImage = /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(ext);
+          if (isImage) {
+            try {
+              // 优先使用 sharp（如果已安装）
+              if (sharp) {
+                const image = sharp(filePath);
+                const metadata = await image.metadata();
+                
+                // 如果图片尺寸超过限制，进行缩放
+                if (metadata.width && metadata.height && 
+                    (metadata.width > MAX_IMAGE_WIDTH || metadata.height > MAX_IMAGE_HEIGHT)) {
+                  console.log(`[图片处理] 图片尺寸过大 (${metadata.width}x${metadata.height})，缩放到 ${MAX_IMAGE_WIDTH}x${MAX_IMAGE_HEIGHT}`);
+                  
+                  // 使用 sharp 缩放图片，保持比例
+                  await image
+                    .resize(MAX_IMAGE_WIDTH, MAX_IMAGE_HEIGHT, {
+                      fit: 'inside',
+                      withoutEnlargement: true,
+                    })
+                    .jpeg({ quality: 90 }) // 转换为 JPEG 格式以减小文件大小
+                    .toFile(filePath + '.resized');
+                  
+                  // 替换原文件
+                  fs.renameSync(filePath + '.resized', filePath);
+                  
+                  const newStats = fs.statSync(filePath);
+                  console.log(`[图片处理] 图片已缩放，新尺寸: ${newStats.size} bytes`);
+                }
+              } else {
+                // 使用 ImageMagick 处理（如果可用）
+                const { exec } = require('child_process');
+                const { promisify } = require('util');
+                const execAsync = promisify(exec);
+                
+                try {
+                  // 检查图片尺寸
+                  const identifyCmd = `magick identify -format "%wx%h" "${filePath}" 2>/dev/null || identify -format "%wx%h" "${filePath}" 2>/dev/null`;
+                  const { stdout: sizeOutput } = await execAsync(identifyCmd);
+                  const [width, height] = sizeOutput.trim().split('x').map(Number);
+                  
+                  // 如果图片尺寸超过限制，进行缩放
+                  if (width && height && (width > MAX_IMAGE_WIDTH || height > MAX_IMAGE_HEIGHT)) {
+                    console.log(`[图片处理] 图片尺寸过大 (${width}x${height})，缩放到 ${MAX_IMAGE_WIDTH}x${MAX_IMAGE_HEIGHT}`);
+                    
+                    const resizeCmd = `magick "${filePath}" -resize ${MAX_IMAGE_WIDTH}x${MAX_IMAGE_HEIGHT}> -quality 90 "${filePath}.resized" 2>/dev/null || convert "${filePath}" -resize ${MAX_IMAGE_WIDTH}x${MAX_IMAGE_HEIGHT}> -quality 90 "${filePath}.resized"`;
+                    await execAsync(resizeCmd);
+                    
+                    // 替换原文件
+                    fs.renameSync(filePath + '.resized', filePath);
+                    
+                    const newStats = fs.statSync(filePath);
+                    console.log(`[图片处理] 图片已缩放，新尺寸: ${newStats.size} bytes`);
+                  }
+                } catch (imError) {
+                  console.warn(`[图片处理] ImageMagick 处理失败，使用原图: ${imError.message}`);
+                  // ImageMagick 处理失败不影响，继续使用原图
+                }
+              }
+            } catch (resizeError) {
+              console.warn(`[图片处理] 缩放图片失败，使用原图: ${resizeError.message}`);
+              // 缩放失败不影响，继续使用原图
+            }
+          }
+          
           const stats = fs.statSync(filePath);
           resolve({
             filename: filename,
@@ -117,108 +196,65 @@ async function downloadFromUrl(url) {
           fs.unlink(filePath, () => {});
           reject(err);
         });
-      }).on('error', (err) => {
-        reject(err);
       });
-    } catch (error) {
-      reject(new Error(`无效的 URL: ${error.message}`));
-    }
-  });
-}
-
-/**
- * @swagger
- * /api/upload:
- *   post:
- *     summary: 上传视频/图片文件（支持本地文件和网络 URL）
- *     tags: [Upload]
- *     requestBody:
- *       required: true
- *       content:
- *         multipart/form-data:
- *           schema:
- *             type: object
- *             properties:
- *               file:
- *                 type: string
- *                 format: binary
- *                 description: 视频/图片文件
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               url:
- *                 type: string
- *                 format: uri
- *                 description: 网络文件 URL
- *     responses:
- *       200:
- *         description: 上传成功
- */
-app.post('/api/upload', async (req, res) => {
-  try {
-    if (req.body && req.body.url) {
-      const { url } = req.body;
       
-      if (!url || typeof url !== 'string') {
-        return res.status(400).json({ error: '无效的 URL' });
-      }
-      
-      try {
-        const downloadResult = await downloadFromUrl(url);
-        const finalPath = path.join(uploadsDir, downloadResult.filename);
-        try {
-          fs.renameSync(downloadResult.path, finalPath);
-        } catch (renameError) {
-          if (renameError.code === 'EXDEV' || renameError.message.includes('cross-device')) {
-            fs.copyFileSync(downloadResult.path, finalPath);
-            fs.unlinkSync(downloadResult.path);
-          } else {
-            throw renameError;
-          }
-        }
-        
-        res.json({
-          success: true,
-          filename: downloadResult.filename,
-          originalName: path.basename(new URL(url).pathname) || 'downloaded_file',
-          path: `/uploads/${downloadResult.filename}`,
-          size: downloadResult.size,
-          source: 'url'
-        });
-      } catch (error) {
-        res.status(500).json({ error: `下载失败: ${error.message}` });
-      }
-    } else {
-      upload.single('file')(req, res, (err) => {
-        if (err) {
-          return res.status(400).json({ error: err.message });
-        }
-        
-        if (!req.file) {
-          return res.status(400).json({ error: '没有上传文件' });
-        }
-        
-        res.json({
-          success: true,
-          filename: req.file.filename,
-          originalName: req.file.originalname,
-          path: `/uploads/${req.file.filename}`,
-          size: req.file.size,
-          source: 'local'
-        });
+      request.on('error', (err) => {
+        reject(new Error(`下载失败: ${err.message}`));
       });
-    }
+      
+      request.on('timeout', () => {
+        request.destroy();
+        reject(new Error('下载超时'));
+      });
+      
   } catch (error) {
-    res.status(500).json({ error: error.message });
+      reject(new Error(`无效的 URL: ${error.message}`));
   }
 });
+}
+
+// /api/upload 接口已移除
+// 现在所有接口都支持直接使用远程资源（url 参数），无需预先上传
 
 /**
  * @swagger
  * /api/compose:
  *   post:
- *     summary: 合成视频（将多个资源合成为一个新视频）
+ *     summary: 合成视频（将多个资源合成为一个新视频，支持远程资源自动下载）
+ *     description: |
+ *       此接口支持两种资源提供方式：
+ *       1. **远程资源（推荐）**：使用 `url` 参数提供 HTTP/HTTPS 链接，系统会自动下载并处理
+ *       2. **本地资源**：使用 `filename` 参数提供已存在的本地文件名（不推荐，建议使用 url）
+ *       
+ *       远程资源会自动进行以下处理：
+ *       - 自动下载远程图片/视频/音频文件
+ *       - 自动识别文件类型和格式
+ *       - 图片自动缩放（如果超过 2560x2560 像素）
+ *       - 处理完成后自动清理临时文件
+ *       
+ *       示例请求：
+ *       ```json
+ *       {
+ *         "resources": [
+ *           {
+ *             "type": "image",
+ *             "url": "https://example.com/image.jpg",
+ *             "duration": 3,
+ *             "transition": "fade"
+ *           },
+ *           {
+ *             "type": "audio",
+ *             "url": "https://example.com/audio.mp3",
+ *             "volume": 100
+ *           }
+ *         ],
+ *         "options": {
+ *           "width": 720,
+ *           "height": 720,
+ *           "fps": 30
+ *         }
+ *       }
+ *       ```
  *     tags: [Process]
  *     requestBody:
  *       required: true
@@ -231,62 +267,194 @@ app.post('/api/upload', async (req, res) => {
  *             properties:
  *               resources:
  *                 type: array
- *                 description: 资源数组，每个资源包含 type, filename, duration 等
+ *                 description: 资源数组，每个资源必须包含 type，以及 url（远程链接）或 filename（本地文件）之一
  *                 items:
  *                   type: object
+ *                   required:
+ *                     - type
  *                   properties:
  *                     type:
  *                       type: string
  *                       enum: [image, video, audio]
+ *                       description: 资源类型（必填）- image（图片）、video（视频）、audio（音频）
+ *                     url:
+ *                       type: string
+ *                       format: uri
+ *                       description: |
+ *                         远程资源 URL（推荐使用）
+ *                         - 支持 HTTP 和 HTTPS 协议
+ *                         - 系统会自动下载并处理
+ *                         - 图片会自动缩放（如果超过限制）
+ *                         - 无需预先上传文件
+ *                         - 示例：https://example.com/image.jpg
  *                     filename:
  *                       type: string
+ *                       description: |
+ *                         本地文件名（可选，不推荐使用）
+ *                         - 仅在没有提供 url 时使用
+ *                         - 文件必须已存在于 uploads 目录中
+ *                         - 推荐使用 url 参数直接提供远程资源
+ *                         - 示例：downloaded_1234567890-123456789.jpg
  *                     duration:
  *                       type: number
- *                       description: 持续时间（秒），图片必填
+ *                       description: 持续时间（秒），图片资源必填，视频/音频可选
+ *                     transition:
+ *                       type: string
+ *                       enum: [none, fade, directional-left, directional-right]
+ *                       default: none
+ *                       description: 过渡效果（仅图片有效）
+ *                     transitionDuration:
+ *                       type: number
+ *                       default: 0.5
+ *                       description: 过渡持续时间（秒）
+ *                     position:
+ *                       type: string
+ *                       default: center
+ *                       description: 位置（center, top, bottom, left, right）
+ *                     scaleMode:
+ *                       type: string
+ *                       enum: [fit, fill]
+ *                       default: fit
+ *                       description: 缩放模式（fit=适应，fill=填充）
  *                     startTime:
  *                       type: number
- *                       description: 开始时间（秒），视频/音频可选
+ *                       description: 开始时间（秒），视频/音频资源可选
+ *                     volume:
+ *                       type: number
+ *                       default: 100
+ *                       description: 音量（0-100），音频资源有效
  *               options:
  *                 type: object
+ *                 description: 视频输出选项
  *                 properties:
+ *                   width:
+ *                     type: number
+ *                     default: 1280
+ *                     description: 视频宽度（像素）
+ *                   height:
+ *                     type: number
+ *                     default: 720
+ *                     description: 视频高度（像素）
  *                   resolution:
  *                     type: string
  *                     default: "1280x720"
+ *                     description: 视频分辨率（格式：宽x高），如果提供了 width 和 height，则优先使用
  *                   fps:
  *                     type: number
  *                     default: 25
+ *                     description: 帧率
  *                   videoCodec:
  *                     type: string
  *                     default: "libx264"
+ *                     description: 视频编码器
  *                   audioCodec:
  *                     type: string
  *                     default: "aac"
+ *                     description: 音频编码器
+ *                   backgroundColor:
+ *                     type: string
+ *                     default: "#000000"
+ *                     description: 背景颜色（十六进制格式）
  *     responses:
  *       200:
  *         description: 合成成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 outputFile:
+ *                   type: string
+ *                   description: 输出文件名
+ *                   example: "composed_1234567890.mp4"
+ *                 path:
+ *                   type: string
+ *                   description: 输出文件访问路径
+ *                   example: "/output/composed_1234567890.mp4"
+ *                 command:
+ *                   type: string
+ *                   description: 执行的 FFmpeg 命令
+ *       400:
+ *         description: 请求参数错误
+ *       500:
+ *         description: 服务器错误
  */
 app.post('/api/compose', async (req, res) => {
   try {
     const { resources, options = {} } = req.body;
     
+    console.log('[视频合成] 收到请求，resources:', JSON.stringify(resources, null, 2));
+    
     if (!Array.isArray(resources) || resources.length === 0) {
       return res.status(400).json({ error: '资源列表不能为空' });
     }
     
-    // 验证资源并构建路径
+    // 验证资源并构建路径（支持远程 URL，filename 为可选）
     const resourcePaths = [];
-    for (const resource of resources) {
-      if (!resource.type || !resource.filename) {
-        return res.status(400).json({ error: '资源必须包含 type 和 filename' });
+    const tempFiles = []; // 记录临时下载的文件，用于后续清理
+    
+    for (let i = 0; i < resources.length; i++) {
+      const resource = resources[i];
+      
+      console.log(`[视频合成] 处理资源 ${i + 1}:`, JSON.stringify(resource));
+      
+      // 验证 type 字段
+      if (!resource.type) {
+        console.error(`[视频合成] 资源 ${i + 1} 缺少 type 字段`);
+        return res.status(400).json({ error: `资源 ${i + 1} 必须包含 type 字段` });
       }
       
       if (!['image', 'video', 'audio'].includes(resource.type)) {
-        return res.status(400).json({ error: `不支持的资源类型: ${resource.type}`});
+        return res.status(400).json({ error: `资源 ${i + 1} 不支持的资源类型: ${resource.type}`});
       }
       
-      const filePath = path.join(uploadsDir, resource.filename);
+      let filePath;
+      let isTempFile = false;
+      
+      // 优先使用 url（远程链接），如果提供了 url 则自动下载
+      if (resource.url) {
+        try {
+          // 验证 URL 格式
+          try {
+            new URL(resource.url);
+          } catch (urlError) {
+            return res.status(400).json({ error: `资源 ${i + 1} 的 URL 格式无效: ${resource.url}` });
+          }
+          
+          console.log(`[视频合成] 开始下载远程资源 ${i + 1}: ${resource.url}`);
+          const downloadResult = await downloadFromUrl(resource.url);
+          
+          // downloadFromUrl 已经将文件保存到 uploadsDir，直接使用返回的路径
+          filePath = downloadResult.path;
+          isTempFile = true; // 标记为临时文件，后续需要清理
+          tempFiles.push(filePath);
+          console.log(`[视频合成] 远程资源下载成功: ${resource.url} -> ${downloadResult.filename} (${(downloadResult.size / 1024).toFixed(2)} KB)`);
+        } catch (downloadError) {
+          console.error(`[视频合成] 下载远程资源失败 (资源 ${i + 1}):`, downloadError);
+          const errorMessage = downloadError.message || '未知错误';
+          return res.status(500).json({ 
+            error: `资源 ${i + 1} 下载远程资源失败`,
+            details: {
+              url: resource.url,
+              type: resource.type,
+              message: errorMessage
+            }
+          });
+        }
+      } else if (resource.filename) {
+        // 使用本地文件名（可选，如果没有 url 才需要）
+        filePath = path.join(uploadsDir, resource.filename);
       if (!fs.existsSync(filePath)) {
-        return res.status(404).json({ error: `文件不存在: ${resource.filename}` });
+          return res.status(404).json({ error: `资源 ${i + 1} 文件不存在: ${resource.filename}` });
+        }
+        console.log(`[视频合成] 使用本地文件: ${resource.filename}`);
+      } else {
+        // 既没有 url 也没有 filename，报错
+        console.error(`[视频合成] 资源 ${i + 1} 既没有 url 也没有 filename`);
+        return res.status(400).json({ error: `资源 ${i + 1} 必须提供 url（远程链接）或 filename（本地文件）` });
       }
       
       resourcePaths.push({
@@ -335,6 +503,18 @@ app.post('/api/compose', async (req, res) => {
       backgroundColor: options.backgroundColor || '#000000'
     });
     
+    // 清理临时下载的文件
+    tempFiles.forEach(tempFile => {
+      try {
+        if (fs.existsSync(tempFile)) {
+          fs.unlinkSync(tempFile);
+          console.log(`[视频合成] 已清理临时文件: ${tempFile}`);
+        }
+      } catch (cleanupError) {
+        console.warn(`[视频合成] 清理临时文件失败: ${tempFile}`, cleanupError.message);
+      }
+    });
+    
     res.json({
       success: true,
       outputFile: outputFilename,
@@ -342,6 +522,18 @@ app.post('/api/compose', async (req, res) => {
       command: result.command
     });
   } catch (error) {
+    // 发生错误时也清理临时文件
+    if (typeof tempFiles !== 'undefined' && Array.isArray(tempFiles)) {
+      tempFiles.forEach(tempFile => {
+        try {
+          if (fs.existsSync(tempFile)) {
+            fs.unlinkSync(tempFile);
+          }
+        } catch (cleanupError) {
+          // 忽略清理错误
+        }
+      });
+    }
     res.status(500).json({ error: error.message });
   }
 });

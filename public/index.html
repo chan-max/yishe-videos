@@ -259,7 +259,7 @@
                   <h3 class="ui header">操作步骤</h3>
                   <ol class="ui list">
                     <li>先进行健康检查，确认 FFmpeg 已安装。</li>
-                    <li>添加多个资源（图片、视频、音频），支持网络 URL。</li>
+                    <li>直接输入远程资源 URL（图片、视频、音频），无需上传。</li>
                     <li>为每个资源设置参数（图片时长、视频/音频的开始时间和持续时间）。</li>
                     <li>设置合成选项（分辨率、帧率等）。</li>
                     <li>点击"开始合成视频"生成新视频。</li>
@@ -345,12 +345,12 @@
                 <div class="field">
                   <label>添加资源（网络 URL）</label>
                   <div class="ui action input" style="display: flex;">
-                    <input type="text" v-model="state.newResourceUrl" placeholder="输入资源 URL" @keyup.enter="addResourceFromUrl" style="flex: 1;">
+                    <input type="text" v-model="state.newResourceUrl" placeholder="输入资源 URL（HTTP/HTTPS）" @keyup.enter="addResourceFromUrl" style="flex: 1;">
                     <button class="ui primary button" @click="addResourceFromUrl" :disabled="!state.newResourceUrl || state.loading.addResource" :class="{ loading: state.loading.addResource }" style="margin-left: 0.5rem;">
                       <i class="plus icon"></i> 添加
                     </button>
                   </div>
-                  <p style="color: #999; font-size: 0.8em; margin-top: 0.5rem;">支持图片、视频、音频格式</p>
+                  <p style="color: #999; font-size: 0.8em; margin-top: 0.5rem;">支持图片、视频、音频格式，系统会自动下载并处理</p>
                 </div>
               </div>
 
@@ -370,9 +370,10 @@
                     <div style="display: flex; align-items: center; gap: 0.5rem;">
                       <i :class="getResourceIcon(resource.type) + ' icon'" :style="{ color: getResourceColor(resource.type) }"></i>
                       <div style="flex: 1; min-width: 0;">
-                        <div style="font-weight: 500; word-break: break-all;">{{ resource.originalName || resource.filename }}</div>
+                        <div style="font-weight: 500; word-break: break-all;">{{ resource.originalName || (resource.url ? resource.url.substring(0, 50) + '...' : '未知') }}</div>
                         <div style="font-size: 0.85em; color: #999; margin-top: 0.25rem;">
                           类型: {{ getResourceTypeName(resource.type) }}
+                          <span v-if="resource.url" style="display: block; margin-top: 0.25rem; word-break: break-all; color: #666;">{{ resource.url }}</span>
                           <span v-if="resource.type === 'image'"> · 时长: {{ resource.duration || 3 }}秒</span>
                           <span v-if="resource.transition && resource.transition !== 'none'"> · 过渡: {{ getTransitionName(resource.transition) }}</span>
                           <span v-if="resource.type === 'audio' && resource.volume !== 100"> · 音量: {{ resource.volume }}%</span>
@@ -722,7 +723,7 @@
               <i class="folder icon"></i>
               <div class="content">
                 文件管理
-                <div class="sub header">查看和管理 uploads 和 output 目录下的文件</div>
+                <div class="sub header">查看和管理临时文件和输出文件</div>
               </div>
             </h1>
             <div class="ui segment compact-segment">
@@ -733,7 +734,7 @@
                   :class="{ primary: state.filesCurrentDirectory === 'uploads' }"
                   @click="switchFilesDirectory('uploads')"
                 >
-                  <i class="upload icon"></i> 上传文件 (uploads)
+                  <i class="folder icon"></i> 临时文件 (uploads)
                 </button>
                 <button 
                   class="ui button" 
@@ -747,7 +748,7 @@
             <div class="ui segment compact-segment">
               <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
                 <h3 class="ui dividing header" style="font-size: 0.95em; margin: 0;">
-                  {{ state.filesCurrentDirectory === 'uploads' ? '上传文件' : '输出文件' }}列表
+                  {{ state.filesCurrentDirectory === 'uploads' ? '临时文件' : '输出文件' }}列表
                 </h3>
                 <div>
                   <button 

@@ -237,52 +237,58 @@ function initApp() {
         }
 
         const url = state.newResourceUrl.trim();
+        
+        // 验证 URL 格式
+        try {
+          new URL(url);
+        } catch (e) {
+          addDebugLog('URL 格式无效，请输入有效的 HTTP/HTTPS 链接', 'error');
+          return;
+        }
+
         state.loading.addResource = true;
-        addDebugLog(`开始从 URL 下载资源: ${url}`, 'info');
+        addDebugLog(`添加远程资源: ${url}`, 'info');
 
         try {
-          const { data } = await axios.post(`${BASE_URL}/api/upload`, {
-            url: url
-          }, {
-            headers: { 'Content-Type': 'application/json' }
-          });
-
-          if (data.success) {
-            const resourceType = detectResourceType(data.filename);
-            if (resourceType === 'unknown') {
-              addDebugLog(`无法识别资源类型: ${data.filename}`, 'error');
-              return;
-            }
-
-            const resource = {
-              id: Date.now() + Math.random(),
-              filename: data.filename,
-              originalName: data.originalName,
-              type: resourceType,
-              duration: resourceType === 'image' ? 3 : undefined, // 图片默认3秒
-              startTime: undefined,
-              // 图片和视频的过渡效果
-              transition: 'none',
-              transitionDuration: 0.5,
-              // 图片和视频的显示控制
-              position: 'center', // center, top-left, top-right, bottom-left, bottom-right
-              scaleMode: 'fit', // fit(适应), fill(填充), crop(裁剪)
-              rotation: 0, // 旋转角度（度）
-              opacity: 100, // 透明度（0-100）
-              // 音频的淡入淡出和音量
-              fade: 'none',
-              fadeDuration: 1,
-              volume: 100
-            };
-
-            state.resources.push(resource);
-            addDebugLog(`添加资源成功: ${data.originalName} (${getResourceTypeName(resourceType)})`, 'success');
-            state.newResourceUrl = '';
-          } else {
-            addDebugLog(`下载失败: ${data.error}`, 'error');
+          // 直接从 URL 识别资源类型
+          const resourceType = detectResourceType(url);
+          if (resourceType === 'unknown') {
+            addDebugLog(`无法识别资源类型，请确保 URL 包含文件扩展名`, 'error');
+            state.loading.addResource = false;
+            return;
           }
+
+          // 从 URL 提取文件名
+          const urlObj = new URL(url);
+          const pathname = urlObj.pathname;
+          const originalName = pathname.split('/').pop() || 'resource';
+
+          const resource = {
+            id: Date.now() + Math.random(),
+            url: url, // 直接保存 URL，不再需要 filename
+            originalName: originalName,
+            type: resourceType,
+            duration: resourceType === 'image' ? 3 : undefined, // 图片默认3秒
+            startTime: undefined,
+            // 图片和视频的过渡效果
+            transition: 'none',
+            transitionDuration: 0.5,
+            // 图片和视频的显示控制
+            position: 'center', // center, top-left, top-right, bottom-left, bottom-right
+            scaleMode: 'fit', // fit(适应), fill(填充), crop(裁剪)
+            rotation: 0, // 旋转角度（度）
+            opacity: 100, // 透明度（0-100）
+            // 音频的淡入淡出和音量
+            fade: 'none',
+            fadeDuration: 1,
+            volume: 100
+          };
+
+          state.resources.push(resource);
+          addDebugLog(`添加资源成功: ${originalName} (${getResourceTypeName(resourceType)})`, 'success');
+          state.newResourceUrl = '';
         } catch (e) {
-          addDebugLog(`下载错误: ${e.response?.data?.error || e.message}`, 'error');
+          addDebugLog(`添加资源错误: ${e.message}`, 'error');
         } finally {
           state.loading.addResource = false;
         }
@@ -344,21 +350,28 @@ function initApp() {
 
         state.loading.compose = true;
         const payload = {
-          resources: state.resources.map(r => ({
-            type: r.type,
-            filename: r.filename,
-            duration: r.duration,
-            startTime: r.startTime,
-            transition: r.transition || 'none',
-            transitionDuration: r.transitionDuration || 0.5,
-            position: r.position || 'center',
-            scaleMode: r.scaleMode || 'fit',
-            rotation: r.rotation || 0,
-            opacity: r.opacity !== undefined ? r.opacity : 100,
-            fade: r.fade || 'none',
-            fadeDuration: r.fadeDuration || 1,
-            volume: r.volume !== undefined ? r.volume : 100
-          })),
+          resources: state.resources.map(r => {
+            const resource = {
+              type: r.type,
+              url: r.url, // 使用 URL 而不是 filename
+              duration: r.duration,
+              startTime: r.startTime,
+              transition: r.transition || 'none',
+              transitionDuration: r.transitionDuration || 0.5,
+              position: r.position || 'center',
+              scaleMode: r.scaleMode || 'fit',
+              rotation: r.rotation || 0,
+              opacity: r.opacity !== undefined ? r.opacity : 100,
+              fade: r.fade || 'none',
+              fadeDuration: r.fadeDuration || 1,
+              volume: r.volume !== undefined ? r.volume : 100
+            };
+            // 如果存在 filename（向后兼容），也添加进去
+            if (r.filename) {
+              resource.filename = r.filename;
+            }
+            return resource;
+          }),
           options: state.composeOptions
         };
         

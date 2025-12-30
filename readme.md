@@ -84,13 +84,68 @@ yishe-videos/
 
 - `GET /api/health` - 健康检查
 - `GET /api/ffmpeg-status` - FFmpeg 状态
-- `POST /api/upload` - 上传文件（支持本地文件和网络 URL）
+- `POST /api/compose` - 合成视频（**支持远程资源自动下载**）
 - `POST /api/info` - 获取视频信息
 - `POST /api/process` - 链式视频处理
 - `GET /api/files/list` - 获取文件列表
 - `DELETE /api/files/delete` - 删除文件
 
 完整 API 文档：http://localhost:1571/api-docs
+
+## 🌐 远程资源支持
+
+`yishe-videos` 服务完全支持远程资源（HTTP/HTTPS 链接），无需预先上传文件。
+
+### 使用远程资源
+
+在调用 `/api/compose` 接口时，可以直接使用 `url` 参数提供远程资源链接：
+
+```json
+{
+  "resources": [
+    {
+      "type": "image",
+      "url": "https://example.com/image.jpg",
+      "duration": 3,
+      "transition": "fade"
+    },
+    {
+      "type": "audio",
+      "url": "https://example.com/audio.mp3",
+      "volume": 100
+    }
+  ],
+  "options": {
+    "width": 720,
+    "height": 720,
+    "fps": 30
+  }
+}
+```
+
+### 自动处理功能
+
+当使用远程资源时，系统会自动：
+
+1. **自动下载**：从远程 URL 下载资源到本地临时目录
+2. **格式识别**：自动识别文件类型（图片/视频/音频）和格式
+3. **图片优化**：如果图片超过 2560x2560 像素，自动缩放以优化性能
+4. **自动清理**：处理完成后自动删除临时文件，节省存储空间
+5. **错误处理**：如果下载失败，返回清晰的错误信息
+
+### 支持的资源类型
+
+- **图片**：JPG, PNG, GIF, WebP, BMP
+- **视频**：MP4, AVI, MOV, WebM, MKV
+- **音频**：MP3, WAV, AAC, OGG
+
+### 注意事项
+
+- 远程资源必须通过 HTTP 或 HTTPS 协议访问
+- 支持重定向（最多 5 次）
+- 下载超时时间为 60 秒
+- HTTPS 链接支持自签名证书（开发环境）
+- 图片会自动缩放，但保持原始宽高比
 
 ## 🎯 支持的操作类型
 

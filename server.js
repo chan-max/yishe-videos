@@ -15,7 +15,7 @@ let sharp = null;
 try {
   sharp = require('sharp');
 } catch (e) {
-  console.warn('[图片处理] sharp 未安装，将使用 ImageMagick 处理图片（如果可用）');
+  console.warn('[图片处理] sharp 未安装，图片缩放功能将不可用，请运行 npm install sharp 安装');
 }
 
 // 图片尺寸限制（避免超大图片导致内存问题）
@@ -118,64 +118,32 @@ async function downloadFromUrl(url) {
         fileStream.on('finish', async () => {
           fileStream.close();
           
-          // 如果是图片，检查并调整尺寸（使用 ImageMagick 或 sharp）
+          // 如果是图片，检查并调整尺寸（使用 sharp）
           const isImage = /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(ext);
-          if (isImage) {
+          if (isImage && sharp) {
             try {
-              // 优先使用 sharp（如果已安装）
-              if (sharp) {
-                const image = sharp(filePath);
-                const metadata = await image.metadata();
+              const image = sharp(filePath);
+              const metadata = await image.metadata();
+              
+              // 如果图片尺寸超过限制，进行缩放
+              if (metadata.width && metadata.height && 
+                  (metadata.width > MAX_IMAGE_WIDTH || metadata.height > MAX_IMAGE_HEIGHT)) {
+                console.log(`[图片处理] 图片尺寸过大 (${metadata.width}x${metadata.height})，缩放到 ${MAX_IMAGE_WIDTH}x${MAX_IMAGE_HEIGHT}`);
                 
-                // 如果图片尺寸超过限制，进行缩放
-                if (metadata.width && metadata.height && 
-                    (metadata.width > MAX_IMAGE_WIDTH || metadata.height > MAX_IMAGE_HEIGHT)) {
-                  console.log(`[图片处理] 图片尺寸过大 (${metadata.width}x${metadata.height})，缩放到 ${MAX_IMAGE_WIDTH}x${MAX_IMAGE_HEIGHT}`);
-                  
-                  // 使用 sharp 缩放图片，保持比例
-                  await image
-                    .resize(MAX_IMAGE_WIDTH, MAX_IMAGE_HEIGHT, {
-                      fit: 'inside',
-                      withoutEnlargement: true,
-                    })
-                    .jpeg({ quality: 90 }) // 转换为 JPEG 格式以减小文件大小
-                    .toFile(filePath + '.resized');
-                  
-                  // 替换原文件
-                  fs.renameSync(filePath + '.resized', filePath);
-                  
-                  const newStats = fs.statSync(filePath);
-                  console.log(`[图片处理] 图片已缩放，新尺寸: ${newStats.size} bytes`);
-                }
-              } else {
-                // 使用 ImageMagick 处理（如果可用）
-                const { exec } = require('child_process');
-                const { promisify } = require('util');
-                const execAsync = promisify(exec);
+                // 使用 sharp 缩放图片，保持比例
+                await image
+                  .resize(MAX_IMAGE_WIDTH, MAX_IMAGE_HEIGHT, {
+                    fit: 'inside',
+                    withoutEnlargement: true,
+                  })
+                  .jpeg({ quality: 90 }) // 转换为 JPEG 格式以减小文件大小
+                  .toFile(filePath + '.resized');
                 
-                try {
-                  // 检查图片尺寸
-                  const identifyCmd = `magick identify -format "%wx%h" "${filePath}" 2>/dev/null || identify -format "%wx%h" "${filePath}" 2>/dev/null`;
-                  const { stdout: sizeOutput } = await execAsync(identifyCmd);
-                  const [width, height] = sizeOutput.trim().split('x').map(Number);
-                  
-                  // 如果图片尺寸超过限制，进行缩放
-                  if (width && height && (width > MAX_IMAGE_WIDTH || height > MAX_IMAGE_HEIGHT)) {
-                    console.log(`[图片处理] 图片尺寸过大 (${width}x${height})，缩放到 ${MAX_IMAGE_WIDTH}x${MAX_IMAGE_HEIGHT}`);
-                    
-                    const resizeCmd = `magick "${filePath}" -resize ${MAX_IMAGE_WIDTH}x${MAX_IMAGE_HEIGHT}> -quality 90 "${filePath}.resized" 2>/dev/null || convert "${filePath}" -resize ${MAX_IMAGE_WIDTH}x${MAX_IMAGE_HEIGHT}> -quality 90 "${filePath}.resized"`;
-                    await execAsync(resizeCmd);
-                    
-                    // 替换原文件
-                    fs.renameSync(filePath + '.resized', filePath);
-                    
-                    const newStats = fs.statSync(filePath);
-                    console.log(`[图片处理] 图片已缩放，新尺寸: ${newStats.size} bytes`);
-                  }
-                } catch (imError) {
-                  console.warn(`[图片处理] ImageMagick 处理失败，使用原图: ${imError.message}`);
-                  // ImageMagick 处理失败不影响，继续使用原图
-                }
+                // 替换原文件
+                fs.renameSync(filePath + '.resized', filePath);
+                
+                const newStats = fs.statSync(filePath);
+                console.log(`[图片处理] 图片已缩放，新尺寸: ${newStats.size} bytes`);
               }
             } catch (resizeError) {
               console.warn(`[图片处理] 缩放图片失败，使用原图: ${resizeError.message}`);

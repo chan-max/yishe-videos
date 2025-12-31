@@ -10,17 +10,6 @@ const swaggerUi = require('swagger-ui-express');
 const swaggerSpec = require('./swagger');
 const ffmpeg = require('./lib/ffmpeg');
 
-// 尝试加载 sharp（如果已安装）
-let sharp = null;
-try {
-  sharp = require('sharp');
-} catch (e) {
-  console.warn('[图片处理] sharp 未安装，图片缩放功能将不可用，请运行 npm install sharp 安装');
-}
-
-// 图片尺寸限制（避免超大图片导致内存问题）
-const MAX_IMAGE_WIDTH = 2560;
-const MAX_IMAGE_HEIGHT = 2560;
 
 const app = express();
 const PORT = process.env.PORT || 1571;
@@ -115,41 +104,8 @@ async function downloadFromUrl(url) {
         const fileStream = fs.createWriteStream(filePath);
         response.pipe(fileStream);
         
-        fileStream.on('finish', async () => {
+        fileStream.on('finish', () => {
           fileStream.close();
-          
-          // 如果是图片，检查并调整尺寸（使用 sharp）
-          const isImage = /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(ext);
-          if (isImage && sharp) {
-            try {
-              const image = sharp(filePath);
-              const metadata = await image.metadata();
-              
-              // 如果图片尺寸超过限制，进行缩放
-              if (metadata.width && metadata.height && 
-                  (metadata.width > MAX_IMAGE_WIDTH || metadata.height > MAX_IMAGE_HEIGHT)) {
-                console.log(`[图片处理] 图片尺寸过大 (${metadata.width}x${metadata.height})，缩放到 ${MAX_IMAGE_WIDTH}x${MAX_IMAGE_HEIGHT}`);
-                
-                // 使用 sharp 缩放图片，保持比例
-                await image
-                  .resize(MAX_IMAGE_WIDTH, MAX_IMAGE_HEIGHT, {
-                    fit: 'inside',
-                    withoutEnlargement: true,
-                  })
-                  .jpeg({ quality: 90 }) // 转换为 JPEG 格式以减小文件大小
-                  .toFile(filePath + '.resized');
-                
-                // 替换原文件
-                fs.renameSync(filePath + '.resized', filePath);
-                
-                const newStats = fs.statSync(filePath);
-                console.log(`[图片处理] 图片已缩放，新尺寸: ${newStats.size} bytes`);
-              }
-            } catch (resizeError) {
-              console.warn(`[图片处理] 缩放图片失败，使用原图: ${resizeError.message}`);
-              // 缩放失败不影响，继续使用原图
-            }
-          }
           
           const stats = fs.statSync(filePath);
           resolve({
@@ -197,7 +153,6 @@ async function downloadFromUrl(url) {
  *       远程资源会自动进行以下处理：
  *       - 自动下载远程图片/视频/音频文件
  *       - 自动识别文件类型和格式
- *       - 图片自动缩放（如果超过 2560x2560 像素）
  *       - 处理完成后自动清理临时文件
  *       
  *       示例请求：
@@ -252,7 +207,6 @@ async function downloadFromUrl(url) {
  *                         远程资源 URL（推荐使用）
  *                         - 支持 HTTP 和 HTTPS 协议
  *                         - 系统会自动下载并处理
- *                         - 图片会自动缩放（如果超过限制）
  *                         - 无需预先上传文件
  *                         - 示例：https://example.com/image.jpg
  *                     filename:

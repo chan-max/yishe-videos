@@ -47,7 +47,7 @@ async function downloadFromUrl(url) {
     try {
       const urlObj = new URL(url);
       const protocol = urlObj.protocol === 'https:' ? https : http;
-      
+
       const options = {
         timeout: 60000, // 60秒超时
         headers: {
@@ -59,21 +59,21 @@ async function downloadFromUrl(url) {
       if (urlObj.protocol === 'https:') {
         options.rejectUnauthorized = false; // 允许自签名证书
       }
-      
+
       const request = protocol.get(url, options, (response) => {
         // 处理重定向
         if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
           return downloadFromUrl(response.headers.location).then(resolve).catch(reject);
         }
-        
+
         if (response.statusCode !== 200) {
           reject(new Error(`下载失败: HTTP ${response.statusCode}`));
           return;
         }
-        
+
         let ext = path.extname(urlObj.pathname).split('?')[0]; // 移除查询参数
         const contentType = response.headers['content-type'];
-        
+
         if (!ext || ext === '') {
           const mimeToExt = {
             'video/mp4': '.mp4',
@@ -96,17 +96,17 @@ async function downloadFromUrl(url) {
           const contentTypeBase = contentType ? contentType.split(';')[0].trim() : '';
           ext = mimeToExt[contentTypeBase] || mimeToExt[contentType] || '.jpg';
         }
-        
+
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
         const filename = `downloaded_${uniqueSuffix}${ext}`;
         const filePath = path.join(uploadsDir, filename); // 直接保存到 uploads 目录
-        
+
         const fileStream = fs.createWriteStream(filePath);
         response.pipe(fileStream);
-        
+
         fileStream.on('finish', () => {
           fileStream.close();
-          
+
           const stats = fs.statSync(filePath);
           resolve({
             filename: filename,
@@ -115,26 +115,26 @@ async function downloadFromUrl(url) {
             originalUrl: url
           });
         });
-        
+
         fileStream.on('error', (err) => {
-          fs.unlink(filePath, () => {});
+          fs.unlink(filePath, () => { });
           reject(err);
         });
       });
-      
+
       request.on('error', (err) => {
         reject(new Error(`下载失败: ${err.message}`));
       });
-      
+
       request.on('timeout', () => {
         request.destroy();
         reject(new Error('下载超时'));
       });
-      
-  } catch (error) {
+
+    } catch (error) {
       reject(new Error(`无效的 URL: ${error.message}`));
-  }
-});
+    }
+  });
 }
 
 // /api/upload 接口已移除
@@ -307,35 +307,35 @@ async function downloadFromUrl(url) {
 app.post('/api/compose', async (req, res) => {
   try {
     const { resources, options = {} } = req.body;
-    
+
     console.log('[视频合成] 收到请求，resources:', JSON.stringify(resources, null, 2));
-    
+
     if (!Array.isArray(resources) || resources.length === 0) {
       return res.status(400).json({ error: '资源列表不能为空' });
     }
-    
+
     // 验证资源并构建路径（支持远程 URL，filename 为可选）
     const resourcePaths = [];
     const tempFiles = []; // 记录临时下载的文件，用于后续清理
-    
+
     for (let i = 0; i < resources.length; i++) {
       const resource = resources[i];
-      
+
       console.log(`[视频合成] 处理资源 ${i + 1}:`, JSON.stringify(resource));
-      
+
       // 验证 type 字段
       if (!resource.type) {
         console.error(`[视频合成] 资源 ${i + 1} 缺少 type 字段`);
         return res.status(400).json({ error: `资源 ${i + 1} 必须包含 type 字段` });
       }
-      
+
       if (!['image', 'video', 'audio'].includes(resource.type)) {
-        return res.status(400).json({ error: `资源 ${i + 1} 不支持的资源类型: ${resource.type}`});
+        return res.status(400).json({ error: `资源 ${i + 1} 不支持的资源类型: ${resource.type}` });
       }
-      
+
       let filePath;
       let isTempFile = false;
-      
+
       // 优先使用 url（远程链接），如果提供了 url 则自动下载
       if (resource.url) {
         try {
@@ -345,10 +345,10 @@ app.post('/api/compose', async (req, res) => {
           } catch (urlError) {
             return res.status(400).json({ error: `资源 ${i + 1} 的 URL 格式无效: ${resource.url}` });
           }
-          
+
           console.log(`[视频合成] 开始下载远程资源 ${i + 1}: ${resource.url}`);
           const downloadResult = await downloadFromUrl(resource.url);
-          
+
           // downloadFromUrl 已经将文件保存到 uploadsDir，直接使用返回的路径
           filePath = downloadResult.path;
           isTempFile = true; // 标记为临时文件，后续需要清理
@@ -357,7 +357,7 @@ app.post('/api/compose', async (req, res) => {
         } catch (downloadError) {
           console.error(`[视频合成] 下载远程资源失败 (资源 ${i + 1}):`, downloadError);
           const errorMessage = downloadError.message || '未知错误';
-          return res.status(500).json({ 
+          return res.status(500).json({
             error: `资源 ${i + 1} 下载远程资源失败`,
             details: {
               url: resource.url,
@@ -369,7 +369,7 @@ app.post('/api/compose', async (req, res) => {
       } else if (resource.filename) {
         // 使用本地文件名（可选，如果没有 url 才需要）
         filePath = path.join(uploadsDir, resource.filename);
-      if (!fs.existsSync(filePath)) {
+        if (!fs.existsSync(filePath)) {
           return res.status(404).json({ error: `资源 ${i + 1} 文件不存在: ${resource.filename}` });
         }
         console.log(`[视频合成] 使用本地文件: ${resource.filename}`);
@@ -378,7 +378,7 @@ app.post('/api/compose', async (req, res) => {
         console.error(`[视频合成] 资源 ${i + 1} 既没有 url 也没有 filename`);
         return res.status(400).json({ error: `资源 ${i + 1} 必须提供 url（远程链接）或 filename（本地文件）` });
       }
-      
+
       resourcePaths.push({
         type: resource.type,
         path: filePath,
@@ -395,11 +395,12 @@ app.post('/api/compose', async (req, res) => {
         volume: resource.volume !== undefined ? resource.volume : 100
       });
     }
-    
+
     // 生成输出文件名
-    const outputFilename = `composed_${Date.now()}.mp4`;
+    const outputFormat = options.format || 'mp4';
+    const outputFilename = `composed_${Date.now()}.${outputFormat}`;
     const outputPath = path.join(outputDir, outputFilename);
-    
+
     // 调用合成方法
     // 处理分辨率：支持 width/height 或 resolution 格式
     let resolution = '1280x720';
@@ -408,7 +409,7 @@ app.post('/api/compose', async (req, res) => {
     } else if (options.resolution) {
       resolution = options.resolution;
     }
-    
+
     const result = await ffmpeg.composeVideo(resourcePaths, outputPath, {
       resolution: resolution,
       width: options.width || 1280,
@@ -424,7 +425,7 @@ app.post('/api/compose', async (req, res) => {
       audioChannels: options.audioChannels || 2,
       backgroundColor: options.backgroundColor || '#000000'
     });
-    
+
     // 清理临时下载的文件
     tempFiles.forEach(tempFile => {
       try {
@@ -436,7 +437,7 @@ app.post('/api/compose', async (req, res) => {
         console.warn(`[视频合成] 清理临时文件失败: ${tempFile}`, cleanupError.message);
       }
     });
-    
+
     res.json({
       success: true,
       outputFile: outputFilename,
@@ -497,33 +498,33 @@ app.post('/api/compose', async (req, res) => {
 app.post('/api/process', async (req, res) => {
   try {
     const { filename, operations } = req.body;
-    
+
     if (!filename) {
       return res.status(400).json({ error: '缺少必要参数: filename' });
     }
-    
+
     if (!Array.isArray(operations) || operations.length === 0) {
       return res.status(400).json({ error: 'operations 必须是非空数组' });
     }
-    
+
     const inputPath = path.join(uploadsDir, filename);
     if (!fs.existsSync(inputPath)) {
       return res.status(404).json({ error: '文件不存在' });
     }
-    
+
     let currentInputPath = inputPath;
     const commands = [];
     const tempFiles = [];
-    
+
     try {
       for (let i = 0; i < operations.length; i++) {
         const operation = operations[i];
         const { type, params = {} } = operation;
-        
+
         if (!type) {
           throw new Error(`操作 ${i + 1} 缺少 type 字段`);
         }
-        
+
         let outputPath;
         if (i === operations.length - 1) {
           const baseName = path.parse(filename).name;
@@ -535,9 +536,9 @@ app.post('/api/process', async (req, res) => {
           outputPath = path.join(outputDir, tempFilename);
           tempFiles.push(outputPath);
         }
-        
+
         let command;
-        
+
         switch (type) {
           case 'convert':
             command = await ffmpeg.convert(currentInputPath, outputPath, {
@@ -552,7 +553,7 @@ app.post('/api/process', async (req, res) => {
               duration: params.duration
             });
             break;
-            
+
           case 'resize':
             command = await ffmpeg.resize(currentInputPath, outputPath, {
               width: parseInt(params.width),
@@ -560,7 +561,7 @@ app.post('/api/process', async (req, res) => {
               maintainAspectRatio: params.maintainAspectRatio !== false
             });
             break;
-            
+
           case 'crop':
             command = await ffmpeg.crop(currentInputPath, outputPath, {
               x: parseInt(params.x) || 0,
@@ -571,7 +572,7 @@ app.post('/api/process', async (req, res) => {
               duration: params.duration
             });
             break;
-            
+
           case 'extractFrame':
             const frameExt = params.format || 'jpg';
             const frameOutputPath = outputPath.replace(/\.[^.]+$/, `.${frameExt}`);
@@ -581,7 +582,7 @@ app.post('/api/process', async (req, res) => {
             });
             outputPath = frameOutputPath;
             break;
-            
+
           case 'extractAudio':
             const audioExt = params.format || 'mp3';
             const audioOutputPath = outputPath.replace(/\.[^.]+$/, `.${audioExt}`);
@@ -592,7 +593,7 @@ app.post('/api/process', async (req, res) => {
             });
             outputPath = audioOutputPath;
             break;
-            
+
           case 'addWatermark':
             const watermarkPath = params.watermarkPath ? path.join(uploadsDir, params.watermarkPath) : null;
             if (!watermarkPath || !fs.existsSync(watermarkPath)) {
@@ -607,7 +608,7 @@ app.post('/api/process', async (req, res) => {
               opacity: parseFloat(params.opacity) || 1.0
             });
             break;
-            
+
           case 'imageToVideo':
             command = await ffmpeg.imageToVideo(currentInputPath, outputPath, {
               duration: parseFloat(params.duration) || 5,
@@ -615,13 +616,13 @@ app.post('/api/process', async (req, res) => {
               resolution: params.resolution || '1280x720'
             });
             break;
-            
+
           default:
             throw new Error(`不支持的操作类型: ${type}`);
         }
-        
+
         commands.push(command.command);
-        
+
         if (i > 0 && currentInputPath !== inputPath && fs.existsSync(currentInputPath)) {
           try {
             fs.unlinkSync(currentInputPath);
@@ -629,10 +630,10 @@ app.post('/api/process', async (req, res) => {
             console.warn(`删除临时文件失败: ${currentInputPath}`, e.message);
           }
         }
-        
+
         currentInputPath = outputPath;
       }
-      
+
       tempFiles.forEach(tempFile => {
         if (fs.existsSync(tempFile) && tempFile !== currentInputPath) {
           try {
@@ -642,16 +643,16 @@ app.post('/api/process', async (req, res) => {
           }
         }
       });
-      
+
       const outputFilename = path.basename(currentInputPath);
-      
+
       res.json({
         success: true,
         outputFile: outputFilename,
         path: `/output/${outputFilename}`,
         commands: commands
       });
-      
+
     } catch (error) {
       tempFiles.forEach(tempFile => {
         if (fs.existsSync(tempFile)) {
@@ -742,28 +743,28 @@ app.use('/output', express.static(outputDir));
 app.get('/api/files/list', async (req, res) => {
   try {
     const { directory } = req.query;
-    
+
     if (!directory || !['uploads', 'output'].includes(directory)) {
       return res.status(400).json({
         success: false,
         error: '目录参数无效，必须是 uploads 或 output'
       });
     }
-    
+
     const dirPath = directory === 'uploads' ? uploadsDir : outputDir;
-    
+
     if (!fs.existsSync(dirPath)) {
       return res.json({
         success: true,
         files: []
       });
     }
-    
+
     const files = fs.readdirSync(dirPath)
       .map(filename => {
         const filePath = path.join(dirPath, filename);
         const stats = fs.statSync(filePath);
-        
+
         return {
           name: filename,
           size: stats.size,
@@ -775,7 +776,7 @@ app.get('/api/files/list', async (req, res) => {
       })
       .filter(file => !file.isDirectory)
       .sort((a, b) => b.modified - a.modified);
-    
+
     res.json({
       success: true,
       files,
@@ -819,47 +820,47 @@ app.get('/api/files/list', async (req, res) => {
 app.delete('/api/files/delete', async (req, res) => {
   try {
     const { directory, filename } = req.body;
-    
+
     if (!directory || !['uploads', 'output'].includes(directory)) {
       return res.status(400).json({
         success: false,
         error: '目录参数无效，必须是 uploads 或 output'
       });
     }
-    
+
     if (!filename) {
       return res.status(400).json({
         success: false,
         error: '文件名不能为空'
       });
     }
-    
+
     if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
       return res.status(400).json({
         success: false,
         error: '文件名包含非法字符'
       });
     }
-    
+
     const dirPath = directory === 'uploads' ? uploadsDir : outputDir;
     const filePath = path.join(dirPath, filename);
-    
+
     if (!filePath.startsWith(dirPath)) {
       return res.status(400).json({
         success: false,
         error: '文件路径无效'
       });
     }
-    
+
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({
         success: false,
         error: '文件不存在'
       });
     }
-    
+
     fs.unlinkSync(filePath);
-    
+
     res.json({
       success: true,
       message: '文件删除成功'
@@ -892,38 +893,38 @@ app.delete('/api/files/delete', async (req, res) => {
 app.delete('/api/files/clear', async (req, res) => {
   try {
     const { directory } = req.query;
-    
+
     if (!directory || !['uploads', 'output'].includes(directory)) {
       return res.status(400).json({
         success: false,
         error: '目录参数无效，必须是 uploads 或 output'
       });
     }
-    
+
     const dirPath = directory === 'uploads' ? uploadsDir : outputDir;
-    
+
     if (!fs.existsSync(dirPath)) {
       return res.json({
         success: true,
         message: '目录不存在或已为空'
       });
     }
-    
+
     const files = fs.readdirSync(dirPath);
     let deletedCount = 0;
     let totalSize = 0;
-    
+
     files.forEach(filename => {
       const filePath = path.join(dirPath, filename);
       const stats = fs.statSync(filePath);
-      
+
       if (stats.isFile()) {
         totalSize += stats.size;
         fs.unlinkSync(filePath);
         deletedCount++;
       }
     });
-    
+
     res.json({
       success: true,
       message: `成功删除 ${deletedCount} 个文件`,
@@ -953,7 +954,7 @@ app.listen(PORT, async () => {
   console.log(`服务器运行在 http://localhost:${PORT}`);
   console.log(`Swagger API 文档: http://localhost:${PORT}/api-docs`);
   console.log('请确保已安装 FFmpeg: https://ffmpeg.org/download.html');
-  
+
   // 启动时检查 FFmpeg
   try {
     const status = await ffmpeg.checkInstallation();

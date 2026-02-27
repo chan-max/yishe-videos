@@ -742,7 +742,7 @@ app.use('/output', express.static(outputDir));
  */
 app.get('/api/files/list', async (req, res) => {
   try {
-    const { directory } = req.query;
+    const { directory, page, pageSize } = req.query;
 
     if (!directory || !['uploads', 'output'].includes(directory)) {
       return res.status(400).json({
@@ -777,10 +777,21 @@ app.get('/api/files/list', async (req, res) => {
       .filter(file => !file.isDirectory)
       .sort((a, b) => b.modified - a.modified);
 
+    const total = files.length;
+    let paginatedFiles = files;
+
+    if (page && pageSize) {
+      const pageNum = parseInt(page, 10);
+      const limit = parseInt(pageSize, 10);
+      const start = (pageNum - 1) * limit;
+      paginatedFiles = files.slice(start, start + limit);
+    }
+
     res.json({
       success: true,
-      files,
+      files: paginatedFiles,
       directory,
+      total,
       totalSize: files.reduce((sum, file) => sum + file.size, 0),
       totalSizeFormatted: formatFileSize(files.reduce((sum, file) => sum + file.size, 0))
     });
@@ -864,6 +875,91 @@ app.delete('/api/files/delete', async (req, res) => {
     res.json({
       success: true,
       message: '文件删除成功'
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * @swagger
+ * /api/files/delete-batch:
+ *   delete:
+ *     summary: 批量删除文件
+ *     tags: [文件管理]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - directory
+ *               - filenames
+ *             properties:
+ *               directory:
+ *                 type: string
+ *                 enum: [uploads, output]
+ *               filenames:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *     responses:
+ *       200:
+ *         description: 批量删除成功
+ */
+app.delete('/api/files/delete-batch', async (req, res) => {
+  try {
+    const { directory, filenames } = req.body;
+
+    if (!directory || !['uploads', 'output'].includes(directory)) {
+      return res.status(400).json({
+        success: false,
+        error: '目录参数无效，必须是 uploads 或 output'
+      });
+    }
+
+    if (!Array.isArray(filenames) || filenames.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: '文件名列表不能为空'
+      });
+    }
+
+    const dirPath = directory === 'uploads' ? uploadsDir : outputDir;
+    let deletedCount = 0;
+    const errors = [];
+
+    filenames.forEach(filename => {
+      try {
+        if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+          errors.push(`文件 ${filename} 包含非法字符`);
+          return;
+        }
+
+        const filePath = path.join(dirPath, filename);
+        if (!filePath.startsWith(dirPath)) {
+          errors.push(`文件 ${filename} 路径无效`);
+          return;
+        }
+
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+          deletedCount++;
+        }
+      } catch (e) {
+        errors.push(`文件 ${filename} 删除失败: ${e.message}`);
+      }
+    });
+
+    res.json({
+      success: true,
+      message: `批量删除完成，成功: ${deletedCount}，失败: ${errors.length}`,
+      deletedCount,
+      errors: errors.length > 0 ? errors : undefined
     });
   } catch (error) {
     res.status(500).json({

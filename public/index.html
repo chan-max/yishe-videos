@@ -752,6 +752,13 @@
                 </h3>
                 <div>
                   <button 
+                    class="ui small red button"
+                    v-if="state.filesSelection.length > 0"
+                    @click="batchDeleteFiles"
+                  >
+                    <i class="trash icon"></i> 批量删除 ({{state.filesSelection.length}})
+                  </button>
+                  <button 
                     class="ui small button" 
                     @click="loadFilesList(state.filesCurrentDirectory)"
                     :class="{ loading: state.filesLoading[state.filesCurrentDirectory] }"
@@ -764,39 +771,108 @@
               <div v-else-if="state.filesList[state.filesCurrentDirectory].length === 0" class="ui message">
                 <p>目录为空，暂无文件</p>
               </div>
-              <div v-else class="ui relaxed divided list">
-                <div 
-                  v-for="file in state.filesList[state.filesCurrentDirectory]" 
-                  :key="file.name"
-                  class="item"
-                  style="padding: 0.75rem 0; display: flex; align-items: center; justify-content: space-between;"
-                >
-                  <div style="flex: 1; min-width: 0;">
-                    <div style="font-weight: 500; word-break: break-all;">{{ file.name }}</div>
-                    <div style="font-size: 0.85em; color: #999; margin-top: 0.25rem;">
-                      {{ file.sizeFormatted }} · {{ new Date(file.modified).toLocaleString('zh-CN') }}
+              <div v-else>
+                <div style="margin-bottom: 0.5rem; display: flex; align-items: center;">
+                  <div class="ui checkbox" @click="toggleAllSelection">
+                    <input type="checkbox" :checked="isAllSelected()">
+                    <label>全选当页 ({{ state.filesList[state.filesCurrentDirectory].length }}项)</label>
+                  </div>
+                </div>
+                <div class="ui relaxed divided list">
+                  <div 
+                    v-for="file in state.filesList[state.filesCurrentDirectory]" 
+                    :key="file.name"
+                    class="item"
+                    style="padding: 0.75rem 0; display: flex; align-items: center; justify-content: space-between;"
+                  >
+                    <div style="flex: 1; min-width: 0; display: flex; align-items: center;">
+                      <div class="ui checkbox" style="margin-right: 1rem;" @click="toggleSelection(file.name)">
+                        <input type="checkbox" :checked="state.filesSelection.includes(file.name)">
+                        <label></label>
+                      </div>
+                      <div style="flex: 1; min-width: 0;">
+                        <div style="font-weight: 500; word-break: break-all;">{{ file.name }}</div>
+                        <div style="font-size: 0.85em; color: #999; margin-top: 0.25rem;">
+                          {{ file.sizeFormatted }} · {{ new Date(file.modified).toLocaleString('zh-CN') }}
+                        </div>
+                      </div>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                      <button 
+                        class="ui mini button" 
+                        @click="openPreview(file)"
+                      >
+                        <i class="eye icon"></i> 预览
+                      </button>
+                      <a 
+                        :href="file.url" 
+                        :download="file.name"
+                        class="ui mini button"
+                      >
+                        <i class="download icon"></i> 下载
+                      </a>
+                      <button 
+                        class="ui mini red button"
+                        @click="deleteFile(state.filesCurrentDirectory, file.name)"
+                      >
+                        <i class="trash icon"></i> 删除
+                      </button>
                     </div>
                   </div>
-                  <div style="display: flex; gap: 0.5rem;">
-                    <a 
-                      :href="file.url" 
-                      :download="file.name"
-                      class="ui mini button"
-                    >
-                      <i class="download icon"></i> 下载
+                </div>
+                <!-- 分页 -->
+                <div v-if="state.filesPagination[state.filesCurrentDirectory].total > 0" style="margin-top: 1rem; text-align: center;">
+                  <div class="ui pagination menu">
+                    <a class="item" 
+                       :class="{ disabled: state.filesPagination[state.filesCurrentDirectory].page <= 1 }" 
+                       @click="changePage(state.filesPagination[state.filesCurrentDirectory].page - 1)">
+                      上一页
                     </a>
-                    <button 
-                      class="ui mini red button"
-                      @click="deleteFile(state.filesCurrentDirectory, file.name)"
-                    >
-                      <i class="trash icon"></i> 删除
-                    </button>
+                    <div class="disabled item">
+                      第 {{ state.filesPagination[state.filesCurrentDirectory].page }} 页 / 
+                      共 {{ Math.ceil(state.filesPagination[state.filesCurrentDirectory].total / state.filesPagination[state.filesCurrentDirectory].pageSize) }} 页 
+                      (总计 {{ state.filesPagination[state.filesCurrentDirectory].total }} 个)
+                    </div>
+                    <a class="item" 
+                       :class="{ disabled: state.filesPagination[state.filesCurrentDirectory].page >= Math.ceil(state.filesPagination[state.filesCurrentDirectory].total / state.filesPagination[state.filesCurrentDirectory].pageSize) }" 
+                       @click="changePage(state.filesPagination[state.filesCurrentDirectory].page + 1)">
+                      下一页
+                    </a>
                   </div>
                 </div>
               </div>
             </div>
           </div>
         </div>
+
+        <!-- 预览模态框 -->
+        <div v-if="state.previewObj" class="ui dimmer modals page transition visible active" style="display: flex !important; justify-content: center; align-items: center; background-color: rgba(0,0,0,0.85);">
+          <div class="ui modal transition visible active" style="position: relative; top: auto; left: auto; margin: 0; width: 80%; background: transparent; box-shadow: none;">
+            <i class="close icon" @click="closePreview" style="position: absolute; top: -30px; right: -30px; color: white; cursor: pointer; font-size: 1.5em; z-index: 1000;"></i>
+            <div class="content" style="background: transparent; display: flex; justify-content: center;">
+              <div v-if="state.previewObj.type === 'video'" style="width: 100%;">
+                <video :src="state.previewObj.url" controls autoplay style="max-width: 100%; max-height: 80vh; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.5);"></video>
+              </div>
+              <div v-else-if="state.previewObj.type === 'image'" style="width: 100%; text-align: center;">
+                <img :src="state.previewObj.url" style="max-width: 100%; max-height: 80vh; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.5);" />
+              </div>
+              <div v-else-if="state.previewObj.type === 'audio'" style="width: 100%; text-align: center; background: #fff; padding: 2rem; border-radius: 8px;">
+                <h3 class="ui header" style="margin-bottom: 2rem;"><i class="music icon"></i> {{ state.previewObj.name }}</h3>
+                <audio :src="state.previewObj.url" controls autoplay style="width: 80%;"></audio>
+              </div>
+              <div v-else style="background: #fff; padding: 2rem; border-radius: 8px; text-align: center;">
+                <i class="file massive icon" style="color: #ccc;"></i>
+                <h3>无法预览该文件类型</h3>
+                <p>{{ state.previewObj.name }}</p>
+                <a :href="state.previewObj.url" :download="state.previewObj.name" class="ui primary button">下载文件</a>
+              </div>
+            </div>
+            <div style="text-align: center; margin-top: 1rem; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.8);">
+              <h3>{{ state.previewObj.name }} ({{ state.previewObj.sizeFormatted }})</h3>
+            </div>
+          </div>
+        </div>
+
       </main>
 
       <aside class="debug-panel">

@@ -3,7 +3,7 @@ function waitForVue(callback) {
   if (typeof Vue !== 'undefined') {
     callback();
   } else {
-    setTimeout(function() {
+    setTimeout(function () {
       waitForVue(callback);
     }, 50);
   }
@@ -14,7 +14,7 @@ function initApp() {
     console.error('Vue 未加载');
     return;
   }
-  
+
   const { createApp, reactive, watch, onMounted, computed, ref } = Vue;
 
   // 使用相对路径，自动使用当前请求的协议和主机
@@ -75,6 +75,12 @@ function initApp() {
           uploads: false,
           output: false
         },
+        filesPagination: {
+          uploads: { page: 1, pageSize: 10, total: 0 },
+          output: { page: 1, pageSize: 10, total: 0 }
+        },
+        filesSelection: [],
+        previewObj: null,
         debugLogs: [],
         loading: {
           health: false,
@@ -177,7 +183,7 @@ function initApp() {
         const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'];
         const videoExts = ['mp4', 'avi', 'mov', 'mkv', 'flv', 'webm', 'm4v', '3gp', 'wmv'];
         const audioExts = ['mp3', 'wav', 'aac', 'ogg', 'm4a', 'flac'];
-        
+
         if (imageExts.includes(ext)) return 'image';
         if (videoExts.includes(ext)) return 'video';
         if (audioExts.includes(ext)) return 'audio';
@@ -237,7 +243,7 @@ function initApp() {
         }
 
         const url = state.newResourceUrl.trim();
-        
+
         // 验证 URL 格式
         try {
           new URL(url);
@@ -374,12 +380,12 @@ function initApp() {
           }),
           options: state.composeOptions
         };
-        
+
         addDebugLog(`开始合成视频: ${JSON.stringify(payload, null, 2)}`, 'info');
 
         try {
           const { data } = await axios.post(`${BASE_URL}/api/compose`, payload);
-          
+
           if (data.success) {
             state.composeResultFile = `${BASE_URL}${data.path}`;
             state.composeResultFilename = data.outputFile;
@@ -397,21 +403,74 @@ function initApp() {
 
       function switchFilesDirectory(directory) {
         state.filesCurrentDirectory = directory;
+        // 切换目录时清除选择并重置页码
+        state.filesSelection = [];
+        state.filesPagination[directory].page = 1;
         loadFilesList(directory);
+      }
+
+      function changePage(page) {
+        const dir = state.filesCurrentDirectory;
+        if (page < 1 || page > Math.ceil(state.filesPagination[dir].total / state.filesPagination[dir].pageSize)) return;
+        state.filesPagination[dir].page = page;
+        state.filesSelection = []; // 翻页时清除选择
+        loadFilesList(dir);
+      }
+
+      function toggleSelection(filename) {
+        const index = state.filesSelection.indexOf(filename);
+        if (index > -1) {
+          state.filesSelection.splice(index, 1);
+        } else {
+          state.filesSelection.push(filename);
+        }
+      }
+
+      function toggleAllSelection() {
+        const dir = state.filesCurrentDirectory;
+        const currentFiles = state.filesList[dir].map(f => f.name);
+        if (state.filesSelection.length === currentFiles.length && currentFiles.length > 0) {
+          state.filesSelection = [];
+        } else {
+          state.filesSelection = [...currentFiles];
+        }
+      }
+
+      function isAllSelected() {
+        const dir = state.filesCurrentDirectory;
+        const currentFiles = state.filesList[dir];
+        return currentFiles.length > 0 && state.filesSelection.length === currentFiles.length;
+      }
+
+      function openPreview(file) {
+        const type = detectResourceType(file.name);
+        state.previewObj = {
+          ...file,
+          type
+        };
+      }
+
+      function closePreview() {
+        state.previewObj = null;
       }
 
       async function loadFilesList(directory) {
         state.filesLoading[directory] = true;
-        addDebugLog(`加载 ${directory} 目录文件列表...`, 'info');
-        
+        addDebugLog(`加载 ${directory} 目录文件列表 (第${state.filesPagination[directory].page}页)...`, 'info');
+
         try {
           const { data } = await axios.get(`${BASE_URL}/api/files/list`, {
-            params: { directory }
+            params: {
+              directory,
+              page: state.filesPagination[directory].page,
+              pageSize: state.filesPagination[directory].pageSize
+            }
           });
-          
+
           if (data.success) {
             state.filesList[directory] = data.files;
-            addDebugLog(`加载成功: ${data.files.length} 个文件`, 'success');
+            state.filesPagination[directory].total = data.total || 0;
+            addDebugLog(`加载成功: 找到 ${data.total} 个文件，当前页显示 ${data.files.length} 个`, 'success');
           } else {
             addDebugLog(`加载失败: ${data.error}`, 'error');
           }
@@ -426,13 +485,13 @@ function initApp() {
         if (!confirm(`确定要删除文件 ${filename} 吗？`)) {
           return;
         }
-        
+
         addDebugLog(`删除文件: ${filename}`, 'info');
         try {
           const { data } = await axios.delete(`${BASE_URL}/api/files/delete`, {
             data: { directory, filename }
           });
-          
+
           if (data.success) {
             addDebugLog(`删除成功: ${filename}`, 'success');
             loadFilesList(directory);
@@ -441,6 +500,38 @@ function initApp() {
           }
         } catch (e) {
           addDebugLog(`删除错误: ${e.response?.data?.error || e.message}`, 'error');
+        }
+      }
+
+      async function batchDeleteFiles() {
+        if (state.filesSelection.length === 0) return;
+
+        const dir = state.filesCurrentDirectory;
+        if (!confirm(`确定要删除选中的 ${state.filesSelection.length} 个文件吗？`)) {
+          return;
+        }
+
+        addDebugLog(`批量删除 ${state.filesSelection.length} 个文件`, 'info');
+        try {
+          const { data } = await axios.delete(`${BASE_URL}/api/files/delete-batch`, {
+            data: {
+              directory: dir,
+              filenames: state.filesSelection
+            }
+          });
+
+          if (data.success) {
+            addDebugLog(`批量删除成功: ${data.deletedCount} 个`, 'success');
+            if (data.errors && data.errors.length > 0) {
+              addDebugLog(`部分删除失败: ${data.errors.join(', ')}`, 'error');
+            }
+            state.filesSelection = [];
+            loadFilesList(dir);
+          } else {
+            addDebugLog(`批量删除失败: ${data.error}`, 'error');
+          }
+        } catch (e) {
+          addDebugLog(`批量删除错误: ${e.response?.data?.error || e.message}`, 'error');
         }
       }
 
@@ -478,6 +569,13 @@ function initApp() {
         switchFilesDirectory,
         loadFilesList,
         deleteFile,
+        batchDeleteFiles,
+        changePage,
+        toggleSelection,
+        toggleAllSelection,
+        isAllSelected,
+        openPreview,
+        closePreview,
         formatFileSize,
         addDebugLog,
         clearDebugLog,
